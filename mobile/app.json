@@ -23,9 +23,7 @@
       "barStyle": "light-content",
       "backgroundColor": "#1e76eb"
     },
-    "plugins": [
-      "expo-constants"
-    ],
+    "plugins": [],
     "extra": {
       "apiUrl": "https://vibechat-uukh.onrender.com",
       "eas": {
