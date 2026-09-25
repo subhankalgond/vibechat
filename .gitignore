@@ -1,0 +1,27 @@
+# Dependencies
+node_modules/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Builds
+client/dist/
+client/dist-ssr/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors and agent tools
+.vscode/
+.idea/
+.freebuff/
+.kilo/
+
