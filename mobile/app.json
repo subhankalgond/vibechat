@@ -27,7 +27,7 @@
       "expo-constants"
     ],
     "extra": {
-      "apiUrl": "http://localhost:5000",
+      "apiUrl": "https://vibechat-uukh.onrender.com",
       "eas": {
         "projectId": ""
       }
