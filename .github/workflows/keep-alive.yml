@@ -12,5 +12,5 @@ jobs:
     steps:
       - name: Ping health endpoint
         run: |
-          code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 25 https://vibechat-api.onrender.com/api/health || true)
+          code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 25 https://vibechat-uukh.onrender.com/api/health || true)
           echo "Health check returned: $code"
