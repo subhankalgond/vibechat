@@ -6,12 +6,15 @@ import Avatar from '../../components/ui/Avatar';
 import EmptyState from '../../components/ui/EmptyState';
 import { ProfileSkeleton } from '../../components/ui/Skeleton';
 import { ButtonSpinner } from '../../components/ui/Spinner';
+import { useToast } from '../../hooks/useToast';
 import { formatLastSeen } from '../../utils/format';
 
 export default function UserProfile() {
   const { username } = useParams();
   const navigate = useNavigate();
   const [state, setState] = useState({ status: 'loading', user: null, conversationId: null });
+  const [messaging, setMessaging] = useState(false);
+  const { toast } = useToast();
 
   useEffect(() => {
     let cancelled = false;
@@ -38,9 +41,17 @@ export default function UserProfile() {
     };
   }, [username]);
 
-  function handleMessage() {
-    if (!state.conversationId) return;
-    navigate(`/app/messages/${state.conversationId}`);
+  async function handleMessage() {
+    if (messaging) return;
+    setMessaging(true);
+    try {
+      // Create the conversation if it does not exist yet, then open it.
+      const response = await api.post('/conversations', { username: state.user.username });
+      navigate(`/app/messages/${response.data.data.id}`);
+    } catch (error) {
+      toast.error(apiError(error).message);
+      setMessaging(false);
+    }
   }
 
   if (state.status === 'loading') return <ProfileSkeleton />;
@@ -133,10 +144,10 @@ export default function UserProfile() {
           <button
             type="button"
             onClick={handleMessage}
-            disabled={!state.conversationId}
+            disabled={messaging}
             className="mt-6 flex items-center gap-2 rounded-xl bg-primary-600 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-60"
           >
-            {!state.conversationId ? <ButtonSpinner size={15} /> : <MessageCircle size={17} />}
+            {messaging ? <ButtonSpinner size={15} /> : <MessageCircle size={17} />}
             Message
           </button>
         </div>
