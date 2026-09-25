@@ -1,0 +1,36 @@
+{
+  "expo": {
+    "name": "VibeChat",
+    "slug": "vibechat",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "splash": {
+      "backgroundColor": "#1e76eb",
+      "resizeMode": "contain"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.vibechat.app"
+    },
+    "android": {
+      "package": "com.vibechat.app",
+      "adaptiveIcon": {
+        "backgroundColor": "#1e76eb"
+      }
+    },
+    "androidStatusBar": {
+      "barStyle": "light-content",
+      "backgroundColor": "#1e76eb"
+    },
+    "plugins": [
+      "expo-constants"
+    ],
+    "extra": {
+      "apiUrl": "http://localhost:5000",
+      "eas": {
+        "projectId": ""
+      }
+    }
+  }
+}

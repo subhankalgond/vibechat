@@ -287,3 +287,35 @@ Handshake sends `auth: { token }`; connections with a missing or expired JWT are
 - Helmet sets secure headers; CORS only allows origins in `CLIENT_URL`
 - Uploads are validated by MIME type and size on the server, not just the browser
 - Error responses never include stack traces or database details
+
+## Mobile app (React Native, Expo)
+
+A React Native client lives in `mobile/`. It talks to the same API and uses the same JWT auth and Socket.IO events as the web client.
+
+### Run it
+
+```bash
+cd mobile
+npm install
+npm start
+```
+
+Then press `a` for Android emulator, `i` for iOS simulator, or scan the QR with the Expo Go app on your phone.
+
+### Point it at your backend
+
+`mobile/app.json` has `extra.apiUrl`. Defaults per platform:
+
+- Android emulator: `http://10.0.2.2:5000` (your machine's localhost)
+- iOS simulator: `http://localhost:5000`
+- Real device: set `extra.apiUrl` in `app.json` to your machine's LAN IP (`http://192.168.x.x:5000`) or your deployed backend (`https://vibechat-uukh.onrender.com`)
+
+### Included screens
+
+- Login and register (full validation, same rules as web)
+- Chats list with unread badges, presence dots, pull to refresh
+- 1-to-1 chat with real-time messages, typing indicator, seen/delivered ticks
+- User search with a direct Message action
+- Profile with account info and logout
+
+Note: photo/video sending is not in the first mobile version; text messaging, presence, and receipts are fully wired.
