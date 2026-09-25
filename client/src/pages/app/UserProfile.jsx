@@ -7,6 +7,7 @@ import EmptyState from '../../components/ui/EmptyState';
 import { ProfileSkeleton } from '../../components/ui/Skeleton';
 import { ButtonSpinner } from '../../components/ui/Spinner';
 import { useToast } from '../../hooks/useToast';
+import { useConversations } from '../../hooks/useConversations';
 import { formatLastSeen } from '../../utils/format';
 
 export default function UserProfile() {
@@ -15,6 +16,7 @@ export default function UserProfile() {
   const [state, setState] = useState({ status: 'loading', user: null, conversationId: null });
   const [messaging, setMessaging] = useState(false);
   const { toast } = useToast();
+  const { refresh: refreshConversations } = useConversations();
 
   useEffect(() => {
     let cancelled = false;
@@ -47,6 +49,8 @@ export default function UserProfile() {
     try {
       // Create the conversation if it does not exist yet, then open it.
       const response = await api.post('/conversations', { username: state.user.username });
+      // The new conversation should appear in the Chats list immediately.
+      refreshConversations();
       navigate(`/app/messages/${response.data.data.id}`);
     } catch (error) {
       toast.error(apiError(error).message);

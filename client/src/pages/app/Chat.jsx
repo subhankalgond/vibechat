@@ -18,7 +18,7 @@ export default function Chat() {
   const { conversationId: conversationIdParam } = useParams();
   const conversationId = Number(conversationIdParam);
   const { user, setUser } = useAuth();
-  const { markConversationRead, setOpenConversation } = useConversations();
+  const { findConversation, markConversationRead, setOpenConversation } = useConversations();
   const toast = useToast();
   const navigate = useNavigate();
 
@@ -57,6 +57,10 @@ export default function Chat() {
     setTyping(false);
     setSearchOpen(false);
     setSearchTerm('');
+
+    // Show the cached header instantly when we already know this chat.
+    const cached = findConversation(conversationId);
+    if (cached) setOtherUser(cached.other_user);
 
     Promise.all([
       api.get(`/conversations/${conversationId}`),

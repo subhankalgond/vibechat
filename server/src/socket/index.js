@@ -167,12 +167,37 @@ function registerSocketHandlers() {
 
 /**
  * Called after a message row is inserted. Pushes to both members.
+ * Includes the sender's public profile so receivers can render new
+ * chat list entries without an extra API round trip.
  */
-function emitNewMessage(conversationId, memberIds, message) {
+async function emitNewMessage(conversationId, memberIds, message) {
   const io = getIo();
   if (!io) return;
+  let sender = null;
+  try {
+    const { rows } = await query(
+      'SELECT id, full_name, username, profile_image, is_online, last_seen FROM users WHERE id = $1 LIMIT 1',
+      [message.sender_id]
+    );
+    if (rows.length) {
+      const row = rows[0];
+      sender = {
+        id: Number(row.id),
+        full_name: row.full_name,
+        username: row.username,
+        profile_image: row.profile_image || null,
+        is_online: Boolean(row.is_online),
+        last_seen: row.last_seen || null,
+      };
+    }
+  } catch {
+    sender = null;
+  }
   for (const memberId of memberIds) {
-    io.to(`user:${memberId}`).emit('message:new', { conversation_id: Number(conversationId), message });
+    io.to(`user:${memberId}`).emit('message:new', {
+      conversation_id: Number(conversationId),
+      message: memberId === message.sender_id ? message : { ...message, sender },
+    });
   }
 }
 

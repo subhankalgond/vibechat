@@ -6,8 +6,8 @@ function StatusTicks({ message }) {
   if (!message.is_mine) return null;
   if (message.seen_at) {
     return (
-      <span className="inline-flex items-center gap-0.5 text-primary-300 dark:text-primary-500" title="Seen">
-        <CheckCheck size={14} />
+      <span className="inline-flex items-center gap-0.5 text-sky-500 dark:text-sky-400" title="Seen">
+        <CheckCheck size={14} strokeWidth={2.5} />
       </span>
     );
   }

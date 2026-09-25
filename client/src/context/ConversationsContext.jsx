@@ -47,7 +47,33 @@ export function ConversationsProvider({ children }) {
       setConversations((prev) => {
         const index = prev.findIndex((c) => c.id === payload.conversation_id);
         if (index === -1) {
-          // A brand new conversation; refresh to pick it up with member info.
+          // Brand new conversation. Build the list entry from the socket
+          // payload right away so it appears in Chats instantly; refresh
+          // keeps it accurate with any fields we cannot derive here.
+          const sender = payload.message.sender || null;
+          if (sender && payload.message.sender_id !== user.id) {
+            const entry = {
+              id: payload.conversation_id,
+              updated_at: payload.message.created_at,
+              other_user: {
+                id: sender.id,
+                full_name: sender.full_name,
+                username: sender.username,
+                profile_image: sender.profile_image || null,
+                is_online: true,
+                last_seen: null,
+              },
+              last_message: {
+                type: payload.message.message_type,
+                text: payload.message.message_text || '',
+                sender_id: payload.message.sender_id,
+                created_at: payload.message.created_at,
+              },
+              unread_count: 1,
+            };
+            refresh();
+            return [entry, ...prev];
+          }
           refresh();
           return prev;
         }
@@ -120,6 +146,12 @@ export function ConversationsProvider({ children }) {
     openConversationRef.current = conversationId === null ? null : Number(conversationId);
   }, []);
 
+  const findConversation = useCallback(
+    (conversationId) =>
+      conversations.find((c) => c.id === Number(conversationId)) || null,
+    [conversations]
+  );
+
   const removeConversation = useCallback((conversationId) => {
     setConversations((prev) => prev.filter((c) => c.id !== Number(conversationId)));
   }, []);
@@ -133,8 +165,9 @@ export function ConversationsProvider({ children }) {
       markConversationRead,
       removeConversation,
       setOpenConversation,
+      findConversation,
     }),
-    [conversations, loading, error, refresh, markConversationRead, removeConversation, setOpenConversation]
+    [conversations, loading, error, refresh, markConversationRead, removeConversation, setOpenConversation, findConversation]
   );
 
   return <ConversationsContext.Provider value={value}>{children}</ConversationsContext.Provider>;

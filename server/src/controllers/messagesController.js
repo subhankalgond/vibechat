@@ -156,7 +156,7 @@ async function send(req, res, next) {
     }
     const messageForSender = deliveredAt ? { ...message, delivered_at: deliveredAt } : message;
 
-    socketModule.emitNewMessage(conversationId, membership.memberIds, message);
+    socketModule.emitNewMessage(conversationId, membership.memberIds, messageForSender);
     const io = getIo();
     if (io && deliveredAt) {
       io.to(`user:${req.user.id}`).emit('message:delivered', {
