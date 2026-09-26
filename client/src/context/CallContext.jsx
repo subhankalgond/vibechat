@@ -112,11 +112,8 @@ export function CallProvider({ children }) {
         setMicOn(true);
         setCamOn(callType === 'video');
 
-        const pc = buildPeer(callType, () => {
-          setActive((prev) => (prev ? { ...prev, remoteStream: prev.remoteStream } : prev));
-        });
-
-        // Keep remote stream on a ref + force re-render via state patch.
+        const pc = buildPeer(callType);
+        pcRef.current = pc;
         pc.ontrack = (event) => {
           const [remoteStream] = event.streams;
           if (remoteStream) {
@@ -174,6 +171,7 @@ export function CallProvider({ children }) {
       setCamOn(invite.callType === 'video');
 
       const pc = buildPeer(invite.callType);
+      pcRef.current = pc;
       pc.ontrack = (event) => {
         const [remoteStream] = event.streams;
         if (remoteStream) {
@@ -237,90 +235,115 @@ export function CallProvider({ children }) {
   }, []);
 
   // ---------- Signaling listeners ----------
+  // The socket can connect AFTER this provider mounts (auth restores the
+  // token asynchronously), so attach on 'connect' and clean up on
+  // 'disconnect' instead of reading getSocket() once.
   useEffect(() => {
-    const socket = getSocket();
-    if (!socket) return undefined;
+    let socket = getSocket();
+    let bound = false;
 
-    const onIncoming = (payload) => {
-      if (!payload || seenIncomingRef.current.has(payload.call_id)) return;
-      if (callMetaRef.current) {
-        // Busy: auto-reject so the caller hears the decline.
-        socket.emit('call:reject', { to_user_id: payload.from.id, call_id: payload.call_id });
-        return;
-      }
-      setIncoming({
-        callId: payload.call_id,
-        conversationId: payload.conversation_id,
-        callType: payload.call_type,
-        sdp: payload.sdp,
-        from: payload.from,
-      });
-    };
+    const attach = () => {
+      if (!socket || bound) return;
+      bound = true;
 
-    const onAnswered = async (payload) => {
-      const meta = callMetaRef.current;
-      if (!meta || meta.role !== 'caller' || payload.call_id !== meta.callId) return;
-      try {
-        const pc = pcRef.current;
-        if (!pc) return;
-        await pc.setRemoteDescription({ type: 'answer', sdp: payload.sdp });
-        const pending = pendingCandidatesRef.current;
-        pendingCandidatesRef.current = [];
-        for (const candidate of pending) {
-          try {
-            await pc.addIceCandidate(candidate);
-          } catch {
-            // ignore stale
-          }
+      const onIncoming = (payload) => {
+        if (!payload || seenIncomingRef.current.has(payload.call_id)) return;
+        if (callMetaRef.current) {
+          // Busy: auto-reject so the caller hears the decline.
+          socket.emit('call:reject', { to_user_id: payload.from.id, call_id: payload.call_id });
+          return;
         }
-      } catch {
-        endCall('failed');
-      }
+        setIncoming({
+          callId: payload.call_id,
+          conversationId: payload.conversation_id,
+          callType: payload.call_type,
+          sdp: payload.sdp,
+          from: payload.from,
+        });
+      };
+
+      const onAnswered = async (payload) => {
+        const meta = callMetaRef.current;
+        if (!meta || meta.role !== 'caller' || payload.call_id !== meta.callId) return;
+        try {
+          const pc = pcRef.current;
+          if (!pc) return;
+          await pc.setRemoteDescription({ type: 'answer', sdp: payload.sdp });
+          const pending = pendingCandidatesRef.current;
+          pendingCandidatesRef.current = [];
+          for (const candidate of pending) {
+            try {
+              await pc.addIceCandidate(candidate);
+            } catch {
+              // ignore stale
+            }
+          }
+        } catch {
+          endCall('failed');
+        }
+      };
+
+      const onIce = (payload) => {
+        const meta = callMetaRef.current;
+        if (!meta || payload.call_id !== meta.callId) return;
+        const candidate = payload.candidate;
+        if (!candidate) return;
+        const pc = pcRef.current;
+        if (pc && pc.remoteDescription && pc.remoteDescription.type) {
+          pc.addIceCandidate(candidate).catch(() => {});
+        } else {
+          pendingCandidatesRef.current.push(candidate);
+        }
+      };
+
+      const onRejected = (payload) => {
+        const meta = callMetaRef.current;
+        if (meta && payload.call_id === meta.callId) {
+          teardown();
+        } else {
+          seenIncomingRef.current.add(payload.call_id);
+        }
+      };
+
+      const onEnded = (payload) => {
+        const meta = callMetaRef.current;
+        if (meta && payload.call_id === meta.callId) {
+          teardown();
+        } else {
+          seenIncomingRef.current.add(payload.call_id);
+          setIncoming((prev) => (prev && prev.callId === payload.call_id ? null : prev));
+        }
+      };
+
+      socket.on('call:incoming', onIncoming);
+      socket.on('call:answered', onAnswered);
+      socket.on('call:ice', onIce);
+      socket.on('call:rejected', onRejected);
+      socket.on('call:ended', onEnded);
     };
 
-    const onIce = (payload) => {
-      const meta = callMetaRef.current;
-      if (!meta || payload.call_id !== meta.callId) return;
-      const candidate = payload.candidate;
-      if (!candidate) return;
-      const pc = pcRef.current;
-      if (pc && pc.remoteDescription && pc.remoteDescription.type) {
-        pc.addIceCandidate(candidate).catch(() => {});
-      } else {
-        pendingCandidatesRef.current.push(candidate);
-      }
-    };
+    // Handle both an already-connected socket and a future connection.
+    if (socket) {
+      if (socket.connected) attach();
+      socket.on('connect', attach);
+    }
 
-    const onRejected = (payload) => {
-      const meta = callMetaRef.current;
-      if (meta && payload.call_id === meta.callId) {
-        teardown();
-      } else {
-        seenIncomingRef.current.add(payload.call_id);
+    // Auth may create the socket after this effect runs; pick it up.
+    // Also re-attach after logout/login swaps the socket instance.
+    const iv = setInterval(() => {
+      if (!socket) {
+        socket = getSocket();
+        if (socket) {
+          bound = false;
+          if (socket.connected) attach();
+          socket.on('connect', attach);
+        }
       }
-    };
+    }, 1000);
 
-    const onEnded = (payload) => {
-      const meta = callMetaRef.current;
-      if (meta && payload.call_id === meta.callId) {
-        teardown();
-      } else {
-        seenIncomingRef.current.add(payload.call_id);
-        setIncoming((prev) => (prev && prev.callId === payload.call_id ? null : prev));
-      }
-    };
-
-    socket.on('call:incoming', onIncoming);
-    socket.on('call:answered', onAnswered);
-    socket.on('call:ice', onIce);
-    socket.on('call:rejected', onRejected);
-    socket.on('call:ended', onEnded);
     return () => {
-      socket.off('call:incoming', onIncoming);
-      socket.off('call:answered', onAnswered);
-      socket.off('call:ice', onIce);
-      socket.off('call:rejected', onRejected);
-      socket.off('call:ended', onEnded);
+      clearInterval(iv);
+      if (socket) socket.off('connect', attach);
     };
   }, [endCall, teardown]);
 

@@ -1,102 +1,123 @@
-/**
- * Creates the VibeChat tables on the configured Postgres database.
- * Uses DIRECT_URL (session mode) when available, falling back to DATABASE_URL.
- * Safe to run multiple times; every statement is idempotent.
- * Usage: npm run setup-db
- */
-require('dotenv').config({ path: require('path').join(__dirname, '../.env') });
-const { Client } = require('pg');
-
-const STATEMENTS = [
-  `CREATE TABLE IF NOT EXISTS users (
-    id             BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    full_name      VARCHAR(80)  NOT NULL,
-    username       VARCHAR(30)  NOT NULL,
-    email          VARCHAR(254) NOT NULL,
-    password_hash  VARCHAR(255) NOT NULL,
-    profile_image  VARCHAR(500)     NULL,
-    profile_image_public_id VARCHAR(255) NULL,
-    bio            VARCHAR(200)     NULL,
-    is_online      BOOLEAN      NOT NULL DEFAULT FALSE,
-    last_seen      TIMESTAMPTZ      NULL,
-    created_at     TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
-    updated_at     TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
-    CONSTRAINT users_username_key UNIQUE (username),
-    CONSTRAINT users_email_key UNIQUE (email)
-  )`,
-  `CREATE INDEX IF NOT EXISTS idx_users_username ON users (username)`,
-  `CREATE INDEX IF NOT EXISTS idx_users_email ON users (email)`,
-  `CREATE TABLE IF NOT EXISTS conversations (
-    id         BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-  )`,
-  `CREATE TABLE IF NOT EXISTS conversation_members (
-    id              BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    conversation_id BIGINT NOT NULL REFERENCES conversations (id) ON DELETE CASCADE,
-    user_id         BIGINT NOT NULL REFERENCES users (id) ON DELETE CASCADE,
-    last_read_at    TIMESTAMPTZ NULL,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    CONSTRAINT conversation_members_unique UNIQUE (conversation_id, user_id)
-  )`,
-  `CREATE INDEX IF NOT EXISTS idx_conversation_members_user ON conversation_members (user_id)`,
-  `CREATE TABLE IF NOT EXISTS messages (
-    id               BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    conversation_id  BIGINT NOT NULL REFERENCES conversations (id) ON DELETE CASCADE,
-    sender_id        BIGINT NOT NULL REFERENCES users (id) ON DELETE CASCADE,
-    receiver_id      BIGINT NOT NULL REFERENCES users (id) ON DELETE CASCADE,
-    message_type     VARCHAR(10) NOT NULL DEFAULT 'text'
-                     CONSTRAINT messages_type_check CHECK (message_type IN ('text', 'image', 'video')),
-    message_text     TEXT NULL,
-    media_url        VARCHAR(600) NULL,
-    media_public_id  VARCHAR(255) NULL,
-    media_type       VARCHAR(40)  NULL,
-    file_name        VARCHAR(255) NULL,
-    file_size        BIGINT NULL,
-    created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    delivered_at     TIMESTAMPTZ NULL,
-    seen_at          TIMESTAMPTZ NULL,
-    CONSTRAINT messages_receiver_check CHECK (receiver_id <> sender_id)
-  )`,
-  `CREATE INDEX IF NOT EXISTS idx_messages_conversation_created ON messages (conversation_id, created_at)`,
-  `CREATE INDEX IF NOT EXISTS idx_messages_sender ON messages (sender_id)`,
-  `CREATE INDEX IF NOT EXISTS idx_messages_receiver ON messages (receiver_id)`,
-  `CREATE TABLE IF NOT EXISTS message_deletions (
-    id         BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    message_id BIGINT NOT NULL REFERENCES messages (id) ON DELETE CASCADE,
-    user_id    BIGINT NOT NULL REFERENCES users (id) ON DELETE CASCADE,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    CONSTRAINT message_deletions_unique UNIQUE (message_id, user_id)
-  )`,
-  `CREATE INDEX IF NOT EXISTS idx_message_deletions_user ON message_deletions (user_id)`,
-  // Voice messages: widen the message_type constraint to include 'audio'.
-  `ALTER TABLE messages DROP CONSTRAINT IF EXISTS messages_type_check`,
-  `ALTER TABLE messages ADD CONSTRAINT messages_type_check CHECK (message_type IN ('text', 'image', 'video', 'audio'))`,
-];
+const { pool } = require('../src/config/db');
 
 async function main() {
-  const direct = process.env.DIRECT_URL;
-  const runtime = process.env.DATABASE_URL;
-  const url = direct || runtime;
-  if (!url) {
-    console.error('DATABASE_URL is not set.');
-    process.exit(1);
-  }
-  console.log('Connecting via', direct ? 'DIRECT_URL (session pooler)' : 'DATABASE_URL', 'on port', new URL(url.replace('postgres://', 'postgresql://')).port || '5432');
+  console.log('Setting up database...');
 
-  const client = new Client({
-    connectionString: url,
-    ssl: url.includes('localhost') || url.includes('127.0.0.1') ? false : { rejectUnauthorized: false },
-  });
-  await client.connect();
-  for (const statement of STATEMENTS) {
-    await client.query(statement);
+  // users
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS users (
+      id BIGSERIAL PRIMARY KEY,
+      username TEXT UNIQUE NOT NULL,
+      full_name TEXT NOT NULL,
+      password_hash TEXT NOT NULL,
+      profile_image TEXT,
+      profile_image_public_id TEXT,
+      about TEXT,
+      is_online BOOLEAN DEFAULT FALSE,
+      last_seen TIMESTAMPTZ,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+  `);
+
+  // conversations
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS conversations (
+      id BIGSERIAL PRIMARY KEY,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+   );
+  `);
+
+  // conversation_members
+  await coreMemberTable();
+
+  async function coreMemberTable() {
+    const existing = await pool.query(
+      "SELECT column_name FROM information_schema.columns WHERE table_name='conversation_members'"
+    );
+    const cols = new Set(existing.rows.map((r) => r.column_name));
+    if (cols.size === 0) {
+      await pool.query(`
+        CREATE TABLE conversation_members (
+          conversation_id BIGINT REFERENCES conversations(id) ON DELETE CASCADE,
+          user_id BIGINT REFERENCES users(id) ON DELETE CASCADE,
+          joined_at TIMESTAMPTZ DEFAULT NOW(),
+          last_read_at TIMESTAMPTZ,
+          PRIMARY KEY (conversation_id, user_id)
+        );
+      `);
+      return;
+    }
+    if (cols.has('last_read_at')) return;
+
+    // Legacy MySQL-era schema: migrate to the current shape.
+    await pool.query('ALTER TABLE conversation_members RENAME TO conversation_members_old');
+    await pool.query(`
+      CREATE TABLE conversation_members (
+        conversation_id BIGINT REFERENCES conversations(id) ON DELETE CASCADE,
+        user_id BIGINT REFERENCES users(id) ON DELETE CASCADE,
+        joined_at TIMESTAMPTZ DEFAULT NOW(),
+        last_read_at TIMESTAMPTZ,
+        PRIMARY KEY (conversation_id, user_id)
+      );
+    `);
+    await pool.query('INSERT INTO conversation_members SELECT conversation_id, user_id, COALESCE(joined_at, NOW()), last_read_at FROM conversation_members_old');
+    await pool.query('DROP TABLE conversation_members_old');
   }
-  const { rows } = await client.query(
-    "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name"
-  );
-  console.log('Tables ready:', rows.map((r) => r.table_name).join(', '));
-  await client.end();
+
+  // messages
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS messages (
+      id BIGSERIAL PRIMARY KEY,
+      conversation_id BIGINT REFERENCES conversations(id) ON DELETE CASCADE,
+      sender_id BIGINT REFERENCES users(id) ON DELETE CASCADE,
+      message_type TEXT NOT NULL DEFAULT 'text' CHECK (message_type IN ('text','image','video','audio')),
+      message_text TEXT,
+      media_url TEXT,
+      media_public_id TEXT,
+      file_name TEXT,
+      file_size BIGINT,
+      media_width INTEGER,
+      media_height INTEGER,
+      duration_seconds INTEGER,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      delivered_at TIMESTAMPTZ,
+      seen_at TIMESTAMPTZ,
+      deleted_at TIMESTAMPTZ
+    );
+  `);
+
+  // message_deletions
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS message_deletions (
+      message_id BIGINT REFERENCES messages(id) ON DELETE CASCADE,
+      user_id BIGINT REFERENCES users(id) ON DELETE CASCADE,
+      deleted_at TIMESTAMPTZ DEFAULT NOW(),
+      PRIMARY KEY (message_id, user_id)
+    );
+  `);
+
+  // media_files: server-side storage fallback used when Cloudinary is not
+  // configured. Voice notes / photos / videos are kept as bytea and served
+  // from /api/media/:id so media works with zero external keys.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS media_files (
+      id TEXT PRIMARY KEY,
+      data BYTEA NOT NULL,
+      media_type TEXT NOT NULL,
+      mime_type TEXT NOT NULL,
+      file_name TEXT,
+      byte_size BIGINT NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+  `);
+
+  // Indexes
+  await pool.query('CREATE INDEX IF NOT EXISTS idx_messages_conversation_created ON messages (conversation_id, created_at DESC)');
+  await pool.query('CREATE INDEX IF NOT EXISTS idx_members_user ON conversation_members (user_id)');
+  await pool.query('CREATE INDEX IF NOT EXISTS idx_messages_seen_pending ON messages (conversation_id) WHERE seen_at IS NULL');
+
+  console.log('Tables ready: conversation_members, conversations, media_files, message_deletions, messages, users');
+  await pool.end();
 }
 
 main().catch((error) => {

@@ -1,4 +1,5 @@
 const crypto = require('crypto');
+const { query } = require('../config/db');
 const cloudinary = require('../config/cloudinary');
 const env = require('../config/env');
 
@@ -30,7 +31,29 @@ function isConfigured() {
 }
 
 /**
- * Upload a buffer to Cloudinary. Returns { url, publicId, mediaType, bytes }.
+ * Store media in the database (bytea) and return a URL served by the API.
+ * Used when Cloudinary keys are not configured, so photo/video/voice
+ * messages work with zero external services.
+ */
+async function uploadBufferToDb(buffer, mimetype, originalName) {
+  const id = `${Date.now().toString(36)}_${crypto.randomBytes(12).toString('hex')}`;
+  await query(
+    `INSERT INTO media_files (id, data, media_type, mime_type, file_name, byte_size)
+     VALUES ($1, $2, $3, $4, $5, $6)`,
+    [id, buffer, mimetype.split('/')[0], mimetype, originalName || null, buffer.length]
+  );
+  return {
+    url: `/api/media/${id}`,
+    publicId: null,
+    mediaType: mimetype.startsWith('video/') ? 'video' : mimetype.startsWith('audio/') ? 'audio' : 'image',
+    format: (EXT_BY_MIME[mimetype] || 'bin').replace('.', ''),
+    bytes: buffer.length,
+  };
+}
+
+/**
+ * Upload a buffer. Prefers Cloudinary when configured; falls back to the
+ * database automatically. Returns { url, publicId, mediaType, bytes }.
  */
 async function uploadBuffer(buffer, mimetype, folder, originalName) {
   if (!IMAGE_MIMES.has(mimetype) && !VIDEO_MIMES.has(mimetype) && !AUDIO_MIMES.has(mimetype)) {
@@ -46,6 +69,10 @@ async function uploadBuffer(buffer, mimetype, folder, originalName) {
     const error = new Error(`${isVideo ? 'Video' : 'Audio'} is too large. Max ${isVideo ? env.maxVideoMb : env.maxImageMb} MB.`);
     error.status = 413;
     throw error;
+  }
+
+  if (!isConfigured()) {
+    return uploadBufferToDb(buffer, mimetype, originalName);
   }
 
   const ext = EXT_BY_MIME[mimetype] || 'bin';
@@ -73,14 +100,37 @@ async function uploadBuffer(buffer, mimetype, folder, originalName) {
   };
 }
 
+/**
+ * Fetch a stored media file from the database fallback. Returns
+ * { data, mimeType, fileName } or null when the id is unknown.
+ */
+async function getDbMedia(id) {
+  const result = await query(
+    'SELECT data, mime_type, file_name FROM media_files WHERE id = $1',
+    [id]
+  );
+  if (result.rows.length === 0) return null;
+  const row = result.rows[0];
+  return { data: row.data, mimeType: row.mime_type, fileName: row.file_name };
+}
+
 async function destroyAsset(publicId) {
   if (!publicId) return;
   const resourceType = publicId.match(/\.(mp4|mov|webm)$/i) || publicId.includes('/video/') ? 'video' : 'image';
   try {
     await cloudinary.uploader.destroy(publicId, { resource_type: resourceType });
-  } catch (error) {
-    console.error('[cloudinary] destroy failed:', error.message);
+  } catch {
+    // Deleting is best-effort; never block message deletion on it.
   }
 }
 
-module.exports = { uploadBuffer, destroyAsset, isConfigured, IMAGE_MIMES, VIDEO_MIMES, AUDIO_MIMES };
+module.exports = {
+  isConfigured,
+  uploadBuffer,
+  uploadBufferToDb,
+  getDbMedia,
+  destroyAsset,
+  IMAGE_MIMES,
+  VIDEO_MIMES,
+  AUDIO_MIMES,
+};

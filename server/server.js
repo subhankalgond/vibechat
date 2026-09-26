@@ -41,6 +41,24 @@ app.get('/api/health', (req, res) => {
   res.json({ success: true, message: 'OK', data: { uptime: process.uptime() } });
 });
 
+// Serve media stored in the database fallback (no Cloudinary keys needed).
+// Auth-optional by design: the ids are unguessable 24-char hex tokens.
+app.get('/api/media/:id', async (req, res, next) => {
+  try {
+    const { getDbMedia } = require('./src/services/uploadService');
+    const media = await getDbMedia(String(req.params.id));
+    if (!media) {
+      return res.status(404).json({ success: false, message: 'Media not found' });
+    }
+    res.setHeader('Content-Type', media.mimeType || 'application/octet-stream');
+    if (media.fileName) res.setHeader('Content-Disposition', `inline; filename="${media.fileName}"`);
+    res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    res.send(media.data);
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.use('/api', apiLimiter);
 app.use('/api/auth', authRoutes);
 app.use('/api/users', usersRoutes);

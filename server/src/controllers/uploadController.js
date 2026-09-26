@@ -1,23 +1,28 @@
 const { query } = require('../config/db');
 const { ok, fail } = require('../utils/serialize');
-const { uploadBuffer, destroyAsset, isConfigured } = require('../services/uploadService');
+const { uploadBuffer, destroyAsset } = require('../services/uploadService');
 const { IMAGE_MIMES, VIDEO_MIMES, AUDIO_MIMES } = require('../middleware/upload');
+
+/** Build an absolute URL when storage returned an API-relative path (DB fallback). */
+function absoluteUrl(req, url) {
+  if (!url || url.startsWith('http')) return url;
+  const proto = req.headers['x-forwarded-proto'] || req.protocol || 'http';
+  const host = req.headers['x-forwarded-host'] || req.headers.host || 'localhost';
+  return `${proto}://${host}${url}`;
+}
 
 /**
  * POST /api/upload/image  (multipart field: image)
  */
 async function uploadImage(req, res, next) {
   try {
-    if (!isConfigured()) {
-      return fail(res, 'Uploads are not configured. Add Cloudinary keys on the server.', 503);
-    }
     if (!req.file) return fail(res, 'No file received.', 422);
     if (!IMAGE_MIMES.has(req.file.mimetype)) {
       return fail(res, 'Unsupported image format. Use JPG, PNG, or WEBP.', 415);
     }
     const result = await uploadBuffer(req.file.buffer, req.file.mimetype, 'vibechat/messages');
     return ok(res, {
-      media_url: result.url,
+      media_url: absoluteUrl(req, result.url),
       media_public_id: result.publicId,
       media_type: result.mediaType,
       file_name: req.file.originalname || null,
@@ -34,16 +39,13 @@ async function uploadImage(req, res, next) {
  */
 async function uploadVideo(req, res, next) {
   try {
-    if (!isConfigured()) {
-      return fail(res, 'Uploads are not configured. Add Cloudinary keys on the server.', 503);
-    }
     if (!req.file) return fail(res, 'No file received.', 422);
     if (!VIDEO_MIMES.has(req.file.mimetype)) {
       return fail(res, 'Unsupported video format. Use MP4, MOV, or WEBM.', 415);
     }
     const result = await uploadBuffer(req.file.buffer, req.file.mimetype, 'vibechat/messages');
     return ok(res, {
-      media_url: result.url,
+      media_url: absoluteUrl(req, result.url),
       media_public_id: result.publicId,
       media_type: result.mediaType,
       file_name: req.file.originalname || null,
@@ -60,9 +62,6 @@ async function uploadVideo(req, res, next) {
  */
 async function uploadAudio(req, res, next) {
   try {
-    if (!isConfigured()) {
-      return fail(res, 'Uploads are not configured. Add Cloudinary keys on the server.', 503);
-    }
     if (!req.file) return fail(res, 'No file received.', 422);
     const mime = String(req.file.mimetype || '').split(';')[0];
     if (!AUDIO_MIMES.has(mime)) {
@@ -70,7 +69,7 @@ async function uploadAudio(req, res, next) {
     }
     const result = await uploadBuffer(req.file.buffer, mime, 'vibechat/messages');
     return ok(res, {
-      media_url: result.url,
+      media_url: absoluteUrl(req, result.url),
       media_public_id: result.publicId,
       media_type: 'audio',
       file_name: req.file.originalname || null,
@@ -84,13 +83,10 @@ async function uploadAudio(req, res, next) {
 
 /**
  * PUT /api/users/avatar  (multipart field: image)
- * Replaces the signed-in user's profile image.
+ * Replaces the signed-in user's profile picture.
  */
 async function updateAvatar(req, res, next) {
   try {
-    if (!isConfigured()) {
-      return fail(res, 'Uploads are not configured. Add Cloudinary keys on the server.', 503);
-    }
     if (!req.file) return fail(res, 'No file received.', 422);
     if (!IMAGE_MIMES.has(req.file.mimetype)) {
       return fail(res, 'Unsupported image format. Use JPG, PNG, or WEBP.', 415);
@@ -108,7 +104,7 @@ async function updateAvatar(req, res, next) {
           SET profile_image = $1, profile_image_public_id = $2
         WHERE id = $3
         RETURNING *`,
-      [result.url, result.publicId, req.user.id]
+      [absoluteUrl(req, result.url), result.publicId, req.user.id]
     );
     if (previousPublicId) await destroyAsset(previousPublicId);
 
