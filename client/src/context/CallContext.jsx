@@ -126,9 +126,13 @@ export function CallProvider({ children }) {
 
         const socket = getSocket();
         const ack = await new Promise((resolve) => {
-          socket.timeout(10000).emit('call:offer', { conversation_id: conversationId, call_type: callType, sdp: offer.sdp }, (err) => {
-            resolve(err ? { success: false, message: 'User is offline' } : { success: true });
-          });
+          socket.timeout(10000).emit(
+            'call:offer',
+            { conversation_id: conversationId, call_type: callType, call_id: callId, sdp: offer.sdp },
+            (err) => {
+              resolve(err ? { success: false, message: 'User is offline' } : { success: true });
+            }
+          );
         });
 
         if (!ack.success) {

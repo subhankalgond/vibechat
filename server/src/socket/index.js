@@ -176,7 +176,11 @@ function registerSocketHandlers() {
           [userId]
         );
         const me = rows[0] || { id: userId, full_name: '', username: socket.username, profile_image: null };
-        const callId = `${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+        // Relay the CALLER's call id so offer/answer/ICE all match on both
+        // sides. Generating a different id here made the caller drop the
+        // answer (id mismatch) and the call stuck on Ringing/Connecting.
+        const rawCallId = payload && typeof payload.call_id === 'string' ? payload.call_id : '';
+        const callId = rawCallId && rawCallId.length <= 64 ? rawCallId : `${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
         io.to(`user:${membership.otherId}`).emit('call:incoming', {
           call_id: callId,
           conversation_id: conversationId,
