@@ -151,6 +151,90 @@ function registerSocketHandlers() {
       }
     });
 
+    // ---- Voice / video call signaling (WebRTC pass-through) ----
+
+    socket.on('call:offer', async (payload, callback) => {
+      try {
+        const conversationId = Number(payload && payload.conversation_id);
+        const callType = payload && payload.call_type === 'video' ? 'video' : 'audio';
+        const sdp = payload && typeof payload.sdp === 'string' ? payload.sdp : '';
+        if (!conversationId || !sdp) {
+          if (typeof callback === 'function') callback({ success: false, message: 'Invalid call payload' });
+          return;
+        }
+        const membership = await getMembership(conversationId, userId);
+        if (!membership) {
+          if (typeof callback === 'function') callback({ success: false, message: 'Not allowed' });
+          return;
+        }
+        if (!isOnline(membership.otherId)) {
+          if (typeof callback === 'function') callback({ success: false, message: 'User is offline' });
+          return;
+        }
+        const { rows } = await query(
+          'SELECT id, full_name, username, profile_image FROM users WHERE id = $1 LIMIT 1',
+          [userId]
+        );
+        const me = rows[0] || { id: userId, full_name: '', username: socket.username, profile_image: null };
+        const callId = `${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+        io.to(`user:${membership.otherId}`).emit('call:incoming', {
+          call_id: callId,
+          conversation_id: conversationId,
+          call_type: callType,
+          sdp,
+          from: {
+            id: Number(me.id),
+            full_name: me.full_name,
+            username: me.username,
+            profile_image: me.profile_image || null,
+          },
+        });
+        if (typeof callback === 'function') callback({ success: true, call_id: callId });
+      } catch {
+        if (typeof callback === 'function') callback({ success: false, message: 'Call failed' });
+      }
+    });
+
+    socket.on('call:answer', (payload) => {
+      const toUserId = Number(payload && payload.to_user_id);
+      const sdp = payload && typeof payload.sdp === 'string' ? payload.sdp : '';
+      if (!toUserId || !sdp) return;
+      io.to(`user:${toUserId}`).emit('call:answered', {
+        call_id: payload.call_id,
+        sdp,
+        from_id: userId,
+      });
+    });
+
+    socket.on('call:ice-candidate', (payload) => {
+      const toUserId = Number(payload && payload.to_user_id);
+      if (!toUserId) return;
+      io.to(`user:${toUserId}`).emit('call:ice', {
+        call_id: payload.call_id,
+        candidate: payload.candidate,
+        from_id: userId,
+      });
+    });
+
+    socket.on('call:reject', (payload) => {
+      const toUserId = Number(payload && payload.to_user_id);
+      if (!toUserId) return;
+      io.to(`user:${toUserId}`).emit('call:rejected', {
+        call_id: payload && payload.call_id,
+        from_id: userId,
+      });
+    });
+
+    socket.on('call:end', (payload) => {
+      const toUserId = Number(payload && payload.to_user_id);
+      if (!toUserId) return;
+      io.to(`user:${toUserId}`).emit('call:ended', {
+        call_id: payload && payload.call_id,
+        from_id: userId,
+        reason: payload.reason || 'hangup',
+      });
+    });
+
     socket.on('disconnect', async () => {
       const sockets = onlineUsers.get(userId);
       if (sockets) {

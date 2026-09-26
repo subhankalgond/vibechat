@@ -16,6 +16,8 @@ import Profile from './pages/app/Profile';
 import UserProfile from './pages/app/UserProfile';
 import Settings from './pages/app/Settings';
 import NotFound from './pages/NotFound';
+import CallOverlay from './components/call/CallOverlay';
+import { useCall } from './context/CallContext';
 
 function FullPageSpinner() {
   return (
@@ -23,6 +25,13 @@ function FullPageSpinner() {
       <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary-600 border-t-transparent" role="status" aria-label="Loading" />
     </div>
   );
+}
+
+/** Mounts the global call overlay inside the authenticated shell. */
+function CallLayer() {
+  const { incoming, active } = useCall();
+  if (!incoming && !active) return null;
+  return <CallOverlay />;
 }
 
 function Protected() {
@@ -49,7 +58,8 @@ export default function App() {
   if (initializing) return <FullPageSpinner />;
 
   return (
-    <Routes>
+    <>
+      <Routes>
       <Route path="/" element={<Navigate to={user ? '/app/messages' : '/login'} replace />} />
 
       <Route element={<GuestOnly />}>
@@ -74,5 +84,7 @@ export default function App() {
 
       <Route path="*" element={<NotFound />} />
     </Routes>
+      <CallLayer />
+    </>
   );
 }

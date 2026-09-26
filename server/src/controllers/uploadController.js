@@ -1,7 +1,7 @@
 const { query } = require('../config/db');
 const { ok, fail } = require('../utils/serialize');
 const { uploadBuffer, destroyAsset, isConfigured } = require('../services/uploadService');
-const { IMAGE_MIMES, VIDEO_MIMES } = require('../middleware/upload');
+const { IMAGE_MIMES, VIDEO_MIMES, AUDIO_MIMES } = require('../middleware/upload');
 
 /**
  * POST /api/upload/image  (multipart field: image)
@@ -56,6 +56,33 @@ async function uploadVideo(req, res, next) {
 }
 
 /**
+ * POST /api/upload/audio  (multipart field: audio)
+ */
+async function uploadAudio(req, res, next) {
+  try {
+    if (!isConfigured()) {
+      return fail(res, 'Uploads are not configured. Add Cloudinary keys on the server.', 503);
+    }
+    if (!req.file) return fail(res, 'No file received.', 422);
+    const mime = String(req.file.mimetype || '').split(';')[0];
+    if (!AUDIO_MIMES.has(mime)) {
+      return fail(res, 'Unsupported audio format.', 415);
+    }
+    const result = await uploadBuffer(req.file.buffer, mime, 'vibechat/messages');
+    return ok(res, {
+      media_url: result.url,
+      media_public_id: result.publicId,
+      media_type: 'audio',
+      file_name: req.file.originalname || null,
+      file_size: result.bytes,
+    }, 'Voice note uploaded', 201);
+  } catch (error) {
+    if (error.status) return fail(res, error.message, error.status);
+    return next(error);
+  }
+}
+
+/**
  * PUT /api/users/avatar  (multipart field: image)
  * Replaces the signed-in user's profile image.
  */
@@ -93,4 +120,4 @@ async function updateAvatar(req, res, next) {
   }
 }
 
-module.exports = { uploadImage, uploadVideo, updateAvatar };
+module.exports = { uploadImage, uploadVideo, uploadAudio, updateAvatar };

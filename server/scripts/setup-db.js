@@ -69,6 +69,9 @@ const STATEMENTS = [
     CONSTRAINT message_deletions_unique UNIQUE (message_id, user_id)
   )`,
   `CREATE INDEX IF NOT EXISTS idx_message_deletions_user ON message_deletions (user_id)`,
+  // Voice messages: widen the message_type constraint to include 'audio'.
+  `ALTER TABLE messages DROP CONSTRAINT IF EXISTS messages_type_check`,
+  `ALTER TABLE messages ADD CONSTRAINT messages_type_check CHECK (message_type IN ('text', 'image', 'video', 'audio'))`,
 ];
 
 async function main() {

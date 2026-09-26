@@ -87,7 +87,7 @@ async function send(req, res, next) {
     if (!membership) return fail(res, 'Conversation not found.', 404);
 
     const type = req.body.message_type;
-    if (!['text', 'image', 'video'].includes(type)) {
+    if (!['text', 'image', 'video', 'audio'].includes(type)) {
       return fail(res, 'Invalid message type.', 422);
     }
 
@@ -110,7 +110,7 @@ async function send(req, res, next) {
       media = {
         url: m.media_url,
         publicId: m.media_public_id,
-        mediaType: m.media_type === 'video' ? 'video' : 'image',
+        mediaType: m.media_type === 'video' ? 'video' : m.media_type === 'audio' ? 'audio' : 'image',
         fileName: typeof m.file_name === 'string' ? m.file_name.slice(0, 255) : null,
         fileSize: Number.isFinite(Number(m.file_size)) ? Number(m.file_size) : null,
       };

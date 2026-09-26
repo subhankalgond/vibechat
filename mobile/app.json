@@ -26,7 +26,13 @@
     "plugins": [
       "expo-asset",
       "expo-font",
-      "expo-status-bar"
+      "expo-status-bar",
+      [
+        "expo-av",
+        {
+          "microphonePermission": "VibeChat needs microphone access to record voice messages."
+        }
+      ]
     ],
     "extra": {
       "apiUrl": "https://vibechat-uukh.onrender.com",

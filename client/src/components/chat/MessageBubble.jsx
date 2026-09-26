@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Check, CheckCheck, Clock, Play, Trash2 } from 'lucide-react';
+import { Check, CheckCheck, Clock, Mic, Play, Trash2 } from 'lucide-react';
 import { formatTime, formatBytes } from '../../utils/format';
 
 function StatusTicks({ message }) {
@@ -72,6 +72,25 @@ function VideoContent({ message, onOpen }) {
   );
 }
 
+function AudioContent({ message, mine }) {
+  return (
+    <div
+      className={`flex items-center gap-2 rounded-xl px-2.5 py-2 ${mine ? 'bg-primary-700/40' : 'bg-neutral-100 dark:bg-neutral-700/60'}`}
+    >
+      <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${mine ? 'bg-white/15' : 'bg-primary-100 dark:bg-primary-900/40'}`}>
+        <Mic size={15} className={mine ? 'text-white' : 'text-primary-600 dark:text-primary-400'} />
+      </span>
+      <audio
+        src={message.media_url}
+        controls
+        preload="metadata"
+        className="h-9 w-48 max-w-[180px] sm:w-56"
+        style={mine ? { colorScheme: 'dark' } : undefined}
+      />
+    </div>
+  );
+}
+
 export default function MessageBubble({ message, onOpenMedia, onDelete }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const mine = message.is_mine;
@@ -122,9 +141,10 @@ export default function MessageBubble({ message, onOpenMedia, onDelete }) {
               : 'bg-white text-neutral-800 dark:bg-neutral-800 dark:text-neutral-100'
           } ${message.message_type !== 'text' ? 'p-1.5' : ''}`}
         >
-          {message.message_type === 'image' && <ImageContent message={message} onOpen={onOpenMedia} />}
-          {message.message_type === 'video' && <VideoContent message={message} onOpen={onOpenMedia} />}
-          {message.message_type === 'text' && <span className="whitespace-pre-wrap break-words">{message.message_text}</span>}
+      {message.message_type === 'image' && <ImageContent message={message} onOpen={onOpenMedia} />}
+      {message.message_type === 'video' && <VideoContent message={message} onOpen={onOpenMedia} />}
+      {message.message_type === 'audio' && <AudioContent message={message} mine={mine} />}
+      {message.message_type === 'text' && <span className="whitespace-pre-wrap break-words">{message.message_text}</span>}
           {message.message_type !== 'text' && hasCaption && (
             <p className={`px-2 pb-1 pt-1.5 ${mine ? 'text-white' : 'text-neutral-800 dark:text-neutral-100'}`}>
               {message.message_text}

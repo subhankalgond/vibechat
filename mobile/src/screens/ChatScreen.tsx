@@ -16,6 +16,8 @@ import { useConversations, OtherUser } from '../context/ConversationsContext';
 import { api } from '../services/api';
 import { getSocket } from '../services/socket';
 import { Avatar } from '../components/ui';
+import AudioBar from '../components/AudioBar';
+import { useVoiceRecorder, VoiceRecording } from '../hooks/useVoiceRecorder';
 import { colors, radius, spacing } from '../theme';
 
 interface Message {
@@ -24,6 +26,7 @@ interface Message {
   sender_id: number;
   message_type: string;
   message_text: string;
+  media_url: string | null;
   created_at: string;
   delivered_at: string | null;
   seen_at: string | null;
@@ -59,6 +62,9 @@ export default function ChatScreen() {
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
   const [typing, setTyping] = useState(false);
+  const [sendingVoice, setSendingVoice] = useState(false);
+  const [voiceNote, setVoiceNote] = useState<VoiceRecording | null>(null);
+  const voice = useVoiceRecorder();
   const listRef = useRef<FlatList<Message>>(null);
   const typingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -178,6 +184,36 @@ export default function ChatScreen() {
     }, 2500);
   }
 
+  async function sendVoiceNote() {
+    if (!voiceNote || sendingVoice) return;
+    setSendingVoice(true);
+    try {
+      const media = await api.upload<{ media_url: string; media_type: string }>(
+        '/upload/audio',
+        voiceNote.uri,
+        'audio',
+        `voice-note-${Date.now()}.m4a`,
+        'audio/aac'
+      );
+      const data = await api.post<{ message: Message }>(
+        '/messages',
+        {
+          conversation_id: conversationId,
+          message_type: 'audio',
+          message_text: '',
+          media,
+        },
+        undefined
+      );
+      setMessages((prev) => (prev.some((m) => m.id === data.message.id) ? prev : [...prev, data.message]));
+      setVoiceNote(null);
+    } catch {
+      // keep the note so the user can retry
+    } finally {
+      setSendingVoice(false);
+    }
+  }
+
   return (
     <KeyboardAvoidingView
       style={styles.container}
@@ -218,10 +254,15 @@ export default function ChatScreen() {
         renderItem={({ item }) => (
           <View style={[styles.bubbleRow, item.is_mine ? { justifyContent: 'flex-end' } : { justifyContent: 'flex-start' }]}>
             <View style={[styles.bubble, item.is_mine ? styles.bubbleMine : styles.bubbleTheirs]}>
-              {item.message_type === 'image' && item.message_text ? null : null}
-              <Text style={[styles.bubbleText, item.is_mine && { color: '#ffffff' }]}>
-                {item.message_type === 'text' || !item.message_text ? item.message_text || '' : `${item.message_type === 'image' ? 'Photo' : 'Video'}${item.message_text ? `: ${item.message_text}` : ''}`}
-              </Text>
+              {item.message_type === 'audio' && item.media_url ? (
+                <AudioBar uri={item.media_url} mine={item.is_mine} />
+              ) : (
+                <Text style={[styles.bubbleText, item.is_mine && { color: '#ffffff' }]}>
+                  {item.message_type === 'text' || !item.message_text
+                    ? item.message_text || ''
+                    : `${item.message_type === 'image' ? '📷 Photo' : '🎬 Video'}${item.message_text ? `: ${item.message_text}` : ''}`}
+                </Text>
+              )}
               <View style={styles.metaRow}>
                 <Text style={[styles.metaText, item.is_mine && { color: 'rgba(255,255,255,0.7)' }]}>
                   {formatTime(item.created_at)}
@@ -240,21 +281,79 @@ export default function ChatScreen() {
       ) : null}
 
       <View style={styles.composer}>
-        <TextInput
-          value={text}
-          onChangeText={handleTextChange}
-          placeholder="Type a message..."
-          placeholderTextColor={colors.textFaint}
-          multiline
-          style={styles.input}
-        />
-        <TouchableOpacity
-          onPress={send}
-          disabled={!text.trim() || sending}
-          style={[styles.sendButton, (!text.trim() || sending) && { opacity: 0.4 }]}
-        >
-          <Text style={styles.sendText}>{'➤'}</Text>
-        </TouchableOpacity>
+        {voice.recording ? (
+          <View style={styles.recordBar}>
+            <View style={styles.recordDot} />
+            <Text style={styles.recordTime}>
+              {Math.floor(voice.seconds / 60)}:{String(voice.seconds % 60).padStart(2, '0')}
+            </Text>
+            <Text style={styles.recordLabel}>Recording voice note...</Text>
+            <TouchableOpacity onPress={() => void voice.stop(true)} style={styles.recordCancel} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+              <Text style={styles.recordCancelText}>Cancel</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={async () => {
+                const note = await voice.stop(false);
+                if (note) setVoiceNote(note);
+              }}
+              style={styles.recordStop}
+            >
+              <Text style={styles.recordStopText}>Done</Text>
+            </TouchableOpacity>
+          </View>
+        ) : voiceNote ? (
+          <View style={styles.recordBar}>
+            <Text style={styles.recordLabel}>Voice note ready</Text>
+            <TouchableOpacity
+              onPress={() => setVoiceNote(null)}
+              disabled={sendingVoice}
+              style={[styles.recordCancel, sendingVoice && { opacity: 0.4 }]}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              <Text style={styles.recordCancelText}>Discard</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => void sendVoiceNote()}
+              disabled={sendingVoice}
+              style={[styles.recordStop, sendingVoice && { opacity: 0.6 }]}
+            >
+              <Text style={styles.recordStopText}>{sendingVoice ? 'Sending...' : 'Send'}</Text>
+            </TouchableOpacity>
+          </View>
+        ) : (
+          <>
+            <TextInput
+              value={text}
+              onChangeText={handleTextChange}
+              placeholder="Type a message..."
+              placeholderTextColor={colors.textFaint}
+              multiline
+              style={styles.input}
+            />
+            {text.trim() ? (
+              <TouchableOpacity
+                onPress={send}
+                disabled={!text.trim() || sending}
+                style={[styles.sendButton, (!text.trim() || sending) && { opacity: 0.4 }]}
+              >
+                <Text style={styles.sendText}>{'➤'}</Text>
+              </TouchableOpacity>
+            ) : (
+              <TouchableOpacity
+                onPress={async () => {
+                  const ok = await voice.start();
+                  if (!ok) {
+                    // Permission denied or recorder busy; nothing else to do here.
+                  }
+                }}
+                disabled={voice.preparing || sendingVoice}
+                style={[styles.sendButton, (voice.preparing || sendingVoice) && { opacity: 0.4 }]}
+              >
+                <Text style={styles.sendText}>{'🎙'}</Text>
+              </TouchableOpacity>
+            )}
+          </>
+        )}
       </View>
     </KeyboardAvoidingView>
   );
@@ -388,6 +487,56 @@ const styles = StyleSheet.create({
   sendText: {
     color: '#ffffff',
     fontSize: 16,
+  },
+  recordBar: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    minHeight: 42,
+    backgroundColor: colors.bgMuted,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 21,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+  },
+  recordDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: '#ef4444',
+  },
+  recordTime: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#ef4444',
+    fontVariant: ['tabular-nums'],
+  },
+  recordLabel: {
+    flex: 1,
+    fontSize: 13,
+    color: colors.textMuted,
+  },
+  recordCancel: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  recordCancelText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: colors.textMuted,
+  },
+  recordStop: {
+    backgroundColor: colors.primary,
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+  },
+  recordStopText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#ffffff',
   },
   empty: {
     alignItems: 'center',

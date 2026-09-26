@@ -9,5 +9,6 @@ router.use(requireAuth);
 
 router.post('/image', withLimits('image'), memoryUpload().single('image'), uploadController.uploadImage);
 router.post('/video', withLimits('video'), memoryUpload().single('video'), uploadController.uploadVideo);
+router.post('/audio', withLimits('audio'), memoryUpload().single('audio'), uploadController.uploadAudio);
 
 module.exports = router;

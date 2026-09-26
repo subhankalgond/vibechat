@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, MessageCircle, Phone, Search } from 'lucide-react';
+import { ArrowLeft, MessageCircle, PhoneCall, Search, Video } from 'lucide-react';
 import api, { apiError } from '../../services/api';
 import { getSocket } from '../../services/socket';
 import { useAuth } from '../../hooks/useAuth';
 import { useConversations } from '../../hooks/useConversations';
+import { useCall } from '../../context/CallContext';
 import { useToast } from '../../hooks/useToast';
 import Avatar from '../../components/ui/Avatar';
 import EmptyState from '../../components/ui/EmptyState';
@@ -19,6 +20,7 @@ export default function Chat() {
   const conversationId = Number(conversationIdParam);
   const { user, setUser } = useAuth();
   const { findConversation, markConversationRead, setOpenConversation } = useConversations();
+  const { startCall, active: activeCall, incoming: incomingCall } = useCall();
   const toast = useToast();
   const navigate = useNavigate();
 
@@ -303,12 +305,38 @@ export default function Chat() {
         >
           <Search size={18} />
         </button>
-        <span
-          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-neutral-300 dark:text-neutral-600"
-          title="Calls are not available in VibeChat"
-        >
-          <Phone size={18} />
-        </span>
+        {otherUser && (
+          <>
+            <button
+              type="button"
+              onClick={async () => {
+                if (activeCall || incomingCall) return;
+                const res = await startCall(conversationId, otherUser, 'audio');
+                if (!res.ok) toast.error(res.error);
+              }}
+              disabled={Boolean(activeCall || incomingCall)}
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-neutral-500 transition hover:bg-neutral-100 disabled:opacity-40 dark:text-neutral-400 dark:hover:bg-neutral-800"
+              aria-label="Start voice call"
+              title="Voice call"
+            >
+              <PhoneCall size={18} />
+            </button>
+            <button
+              type="button"
+              onClick={async () => {
+                if (activeCall || incomingCall) return;
+                const res = await startCall(conversationId, otherUser, 'video');
+                if (!res.ok) toast.error(res.error);
+              }}
+              disabled={Boolean(activeCall || incomingCall)}
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-neutral-500 transition hover:bg-neutral-100 disabled:opacity-40 dark:text-neutral-400 dark:hover:bg-neutral-800"
+              aria-label="Start video call"
+              title="Video call"
+            >
+              <Video size={18} />
+            </button>
+          </>
+        )}
       </header>
 
       {searchOpen && (

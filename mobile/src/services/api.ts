@@ -1,5 +1,6 @@
 import Constants from 'expo-constants';
 import { Platform } from 'react-native';
+import { loadToken } from './storage';
 
 /**
  * Base URL of the VibeChat API.
@@ -63,5 +64,32 @@ export const api = {
   },
   delete<T = any>(path: string, token?: string | null) {
     return this.request<T>('DELETE', path, undefined, token);
+  },
+
+  /**
+   * Multipart file upload (used for voice notes). `fileUri` is a local
+   * file:// URI from the recorder; name and mimeType tell the server
+   * which form field / extension to expect.
+   */
+  async upload<T = any>(path: string, fileUri: string, fieldName: string, fileName: string, mimeType: string): Promise<T> {
+    const token = await loadToken();
+    const form = new FormData();
+    // RN's fetch accepts this shape and builds the multipart body itself.
+    form.append(fieldName, { uri: fileUri, name: fileName, type: mimeType } as any);
+    const response = await fetch(`${API_URL}/api${path}`, {
+      method: 'POST',
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      body: form,
+    });
+    let data: any = null;
+    try {
+      data = await response.json();
+    } catch {
+      data = null;
+    }
+    if (!response.ok || !data?.success) {
+      throw new Error((data && data.message) || `Upload failed (${response.status})`);
+    }
+    return data.data as T;
   },
 };
