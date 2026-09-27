@@ -28,7 +28,7 @@
       "expo-font",
       "expo-status-bar",
       [
-        "expo-av",
+        "expo-audio",
         {
           "microphonePermission": "VibeChat needs microphone access to record voice messages."
         }

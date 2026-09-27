@@ -1,6 +1,6 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect } from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { Audio } from 'expo-av';
+import { setAudioModeAsync, useAudioPlayer, useAudioPlayerStatus } from 'expo-audio';
 import { colors } from '../theme';
 
 interface Props {
@@ -10,69 +10,36 @@ interface Props {
 
 /** Small play/pause audio player used for voice messages in the chat. */
 export default function AudioBar({ uri, mine }: Props) {
-  const soundRef = useRef<Audio.Sound | null>(null);
-  const [playing, setPlaying] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [positionMs, setPositionMs] = useState(0);
-  const [durationMs, setDurationMs] = useState(0);
+  const player = useAudioPlayer({ uri }, { updateInterval: 250 });
+  const status = useAudioPlayerStatus(player);
+
+  const playing = status.playing;
+  const positionMs = (status.currentTime || 0) * 1000;
+  const durationMs = (status.duration || 0) * 1000;
 
   useEffect(() => {
     return () => {
-      if (soundRef.current) {
-        soundRef.current.unloadAsync().catch(() => {});
-        soundRef.current = null;
+      try {
+        player.release();
+      } catch {
+        // already released
       }
     };
-  }, []);
+  }, [player]);
 
   async function toggle() {
     try {
-      if (!soundRef.current) {
-        setLoading(true);
-        await Audio.setAudioModeAsync({ playsInSilentModeIOS: true });
-        const { sound } = await Audio.Sound.createAsync(
-          { uri },
-          { progressUpdateIntervalMillis: 250 },
-          (status) => {
-            if (status.isLoaded) {
-              setPositionMs(status.positionMillis || 0);
-              if (status.durationMillis) setDurationMs(status.durationMillis);
-              if (status.didJustFinish) {
-                setPlaying(false);
-                setPositionMs(0);
-                sound.getStatusAsync().then((s) => {
-                  if (s.isLoaded) sound.setPositionAsync(0).catch(() => {});
-                });
-              }
-            }
-          }
-        );
-        soundRef.current = sound;
-        setLoading(false);
-        await sound.playAsync();
-        setPlaying(true);
+      await setAudioModeAsync({ playsInSilentMode: true });
+      if (playing) {
+        player.pause();
         return;
       }
-
-      const status = await soundRef.current.getStatusAsync();
-      if (!status.isLoaded) return;
-      if (playing) {
-        await soundRef.current.pauseAsync();
-        setPlaying(false);
-      } else {
-        const finished =
-          status.didJustFinish ||
-          (status.durationMillis != null && status.positionMillis >= status.durationMillis);
-        if (finished) {
-          await soundRef.current.replayAsync();
-        } else {
-          await soundRef.current.playAsync();
-        }
-        setPlaying(true);
+      if (status.didJustFinish || (status.duration > 0 && status.currentTime >= status.duration)) {
+        player.seekTo(0);
       }
+      player.play();
     } catch {
-      setLoading(false);
-      setPlaying(false);
+      // playback errors are non-fatal for the UI
     }
   }
 
@@ -86,9 +53,12 @@ export default function AudioBar({ uri, mine }: Props) {
 
   return (
     <View style={styles.row}>
-      <TouchableOpacity onPress={toggle} disabled={loading} style={[styles.playBtn, { borderColor: mine ? 'rgba(255,255,255,0.5)' : colors.border }]}>
+      <TouchableOpacity
+        onPress={toggle}
+        style={[styles.playBtn, { borderColor: mine ? 'rgba(255,255,255,0.5)' : colors.border }]}
+      >
         <Text style={[styles.playIcon, { color: mine ? '#ffffff' : colors.primary }]}>
-          {loading ? '…' : playing ? '❚❚' : '▶'}
+          {playing ? '❚❚' : '▶'}
         </Text>
       </TouchableOpacity>
 
@@ -98,7 +68,7 @@ export default function AudioBar({ uri, mine }: Props) {
         </View>
         <Text style={[styles.time, { color: mine ? 'rgba(255,255,255,0.8)' : colors.textMuted }]}>
           {fmt(durationMs || 0)}
-        </Text>
+</Text>
       </View>
     </View>
   );
@@ -128,7 +98,7 @@ const styles = StyleSheet.create({
   trackWrap: {
     flex: 1,
     flexDirection: 'row',
-    alignItems: 'center',
+  alignItems: 'center',
     gap: 8,
   },
   track: {
