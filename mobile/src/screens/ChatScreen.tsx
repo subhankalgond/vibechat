@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  Alert,
   FlatList,
   KeyboardAvoidingView,
   Platform,
@@ -31,7 +32,14 @@ interface Message {
   delivered_at: string | null;
   seen_at: string | null;
   is_mine: boolean;
+  edited_at?: string | null;
+  reply_to_id?: number | null;
+  reply_to?: { id: number; text: string; type: string; sender_name: string } | null;
+  reactions?: { user_id: number; emoji: string }[];
+  sender_name?: string | null;
 }
+
+const REACTIONS = ['👍', '❤️', '😂', '😮', '😢', '🙏', '🔥'];
 
 function Ticks({ message }: { message: Message }) {
   if (!message.is_mine) return null;
@@ -58,12 +66,16 @@ export default function ChatScreen() {
   const { markRead } = useConversations();
 
   const [otherUser, setOtherUser] = useState<OtherUser | null>(initialOther || null);
+  const [groupName, setGroupName] = useState<string | null>(route.params.groupName || null);
+  const [memberCount, setMemberCount] = useState(0);
   const [messages, setMessages] = useState<Message[]>([]);
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
   const [typing, setTyping] = useState(false);
   const [sendingVoice, setSendingVoice] = useState(false);
   const [voiceNote, setVoiceNote] = useState<VoiceRecording | null>(null);
+  const [replyTo, setReplyTo] = useState<Message | null>(null);
+  const [editing, setEditing] = useState<Message | null>(null);
   const voice = useVoiceRecorder();
   const listRef = useRef<FlatList<Message>>(null);
   const typingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -74,11 +86,19 @@ export default function ChatScreen() {
     (async () => {
       try {
         const [convo, msgs] = await Promise.all([
-          api.get<{ other_user: OtherUser }>(`/conversations/${conversationId}`, user ? undefined : null),
+          api.get<{ other_user: OtherUser | null; type?: string; name?: string | null; members?: unknown[] }>(
+            `/conversations/${conversationId}`,
+            user ? undefined : null
+          ),
           api.get<{ messages: Message[] }>(`/messages/${conversationId}`, undefined),
         ]);
         if (cancelled) return;
         setOtherUser(convo.other_user);
+        if (convo.type === 'group') {
+          setGroupName(convo.name || 'Group');
+          setMemberCount(Array.isArray(convo.members) ? convo.members.length : 0);
+          navigation.setOptions?.({ title: convo.name || 'Group' });
+        }
         setMessages(msgs.messages);
       } catch (error) {
         if (!cancelled) {
@@ -131,6 +151,23 @@ export default function ChatScreen() {
       );
     };
 
+    const onDeleted = (payload: { conversation_id: number; message_id: number; deleted_by: number; for_everyone?: boolean }) => {
+      if (payload.conversation_id !== conversationId) return;
+      if (payload.for_everyone || payload.deleted_by === user?.id) {
+        setMessages((prev) => prev.filter((m) => m.id !== payload.message_id));
+      }
+    };
+
+    const onEdited = (payload: { conversation_id: number; message: Message }) => {
+      if (payload.conversation_id !== conversationId) return;
+      setMessages((prev) => prev.map((m) => (m.id === payload.message.id ? { ...m, ...payload.message } : m)));
+    };
+
+    const onReaction = (payload: { conversation_id: number; message_id: number; reactions: { user_id: number; emoji: string }[] }) => {
+      if (payload.conversation_id !== conversationId) return;
+      setMessages((prev) => prev.map((m) => (m.id === payload.message_id ? { ...m, reactions: payload.reactions } : m)));
+    };
+
     const onTypingStart = (payload: { conversation_id: number; user_id: number }) => {
       if (payload.conversation_id === conversationId && payload.user_id !== user?.id) setTyping(true);
     };
@@ -141,12 +178,18 @@ export default function ChatScreen() {
     socket.on('message:new', onNewMessage);
     socket.on('message:seen', onSeen);
     socket.on('message:delivered', onDelivered);
+    socket.on('message:deleted', onDeleted);
+    socket.on('message:edited', onEdited);
+    socket.on('message:reaction', onReaction);
     socket.on('typing:start', onTypingStart);
     socket.on('typing:stop', onTypingStop);
     return () => {
       socket.off('message:new', onNewMessage);
       socket.off('message:seen', onSeen);
       socket.off('message:delivered', onDelivered);
+      socket.off('message:deleted', onDeleted);
+      socket.off('message:edited', onEdited);
+      socket.off('message:reaction', onReaction);
       socket.off('typing:start', onTypingStart);
       socket.off('typing:stop', onTypingStop);
     };
@@ -155,15 +198,37 @@ export default function ChatScreen() {
   const send = useCallback(async () => {
     const trimmed = text.trim();
     if (!trimmed || sending) return;
+
+    if (editing) {
+      setSending(true);
+      try {
+        const data = await api.put<{ message: Message }>(`/messages/${editing.id}`, { message_text: trimmed });
+        setMessages((prev) => prev.map((m) => (m.id === data.message.id ? { ...m, ...data.message } : m)));
+        setEditing(null);
+        setText('');
+      } catch {
+        // keep text for retry
+      } finally {
+        setSending(false);
+      }
+      return;
+    }
+
     setSending(true);
     setText('');
     try {
       const data = await api.post<{ message: Message }>(
         '/messages',
-        { conversation_id: conversationId, message_type: 'text', message_text: trimmed },
+        {
+          conversation_id: conversationId,
+          message_type: 'text',
+          message_text: trimmed,
+          ...(replyTo ? { reply_to_id: replyTo.id } : {}),
+        },
         undefined
       );
       setMessages((prev) => (prev.some((m) => m.id === data.message.id) ? prev : [...prev, data.message]));
+      setReplyTo(null);
       const socket = getSocket();
       if (socket) socket.emit('typing:stop', { conversation_id: conversationId });
     } catch (error) {
@@ -171,7 +236,42 @@ export default function ChatScreen() {
     } finally {
       setSending(false);
     }
-  }, [text, sending, conversationId]);
+  }, [text, sending, conversationId, replyTo, editing]);
+
+  async function react(message: Message, emoji: string) {
+    try {
+      await api.post(`/messages/${message.id}/reactions`, { emoji });
+    } catch {
+      // reaction state arrives via socket
+    }
+  }
+
+  function longPressMessage(message: Message) {
+    const options: string[] = ['Reply', 'React 👍', 'Cancel'];
+    if (message.is_mine && message.message_type === 'text') options.unshift('Edit');
+    if (message.is_mine) options.unshift('Delete');
+    Alert.alert('Message options', undefined, [
+      ...(message.is_mine
+        ? [
+            {
+              text: 'Delete for me',
+              style: 'destructive' as const,
+              onPress: () => {
+                api.delete(`/messages/${message.id}`).catch(() => {});
+                setMessages((prev) => prev.filter((m) => m.id !== message.id));
+              },
+            },
+          ]
+        : []),
+      ...(message.is_mine && message.message_type === 'text'
+        ? [{ text: 'Edit', onPress: () => { setEditing(message); setText(message.message_text); } }]
+        : []),
+      { text: 'Reply', onPress: () => setReplyTo(message) },
+      { text: 'React 👍', onPress: () => void react(message, '👍') },
+      { text: 'React ❤️', onPress: () => void react(message, '❤️') },
+      { text: 'Cancel', style: 'cancel' as const },
+    ]);
+  }
 
   function handleTextChange(value: string) {
     setText(value);
@@ -224,7 +324,21 @@ export default function ChatScreen() {
         <TouchableOpacity onPress={() => navigation.goBack()} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
           <Text style={styles.back}>{'‹'}</Text>
         </TouchableOpacity>
-        {otherUser ? (
+        {groupName ? (
+          <View style={styles.headerUser}>
+            <View style={[styles.groupHeaderAvatar, { backgroundColor: colors.primary }]}>
+              <Text style={styles.groupHeaderAvatarText} numberOfLines={1}>
+                {groupName.slice(0, 2).toUpperCase()}
+              </Text>
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.headerName} numberOfLines={1}>{groupName}</Text>
+              <Text style={[styles.headerStatus, typing && { color: colors.primary }]}>
+                {typing ? 'typing...' : memberCount ? `${memberCount} members` : 'Group chat'}
+              </Text>
+            </View>
+          </View>
+        ) : otherUser ? (
           <View style={styles.headerUser}>
             <Avatar fullName={otherUser.full_name} uri={otherUser.profile_image} size={38} online={otherUser.is_online} />
             <View style={{ flex: 1 }}>
@@ -251,27 +365,57 @@ export default function ChatScreen() {
             <Text style={styles.emptyText}>Send a message to say hello.</Text>
           </View>
         }
-        renderItem={({ item }) => (
-          <View style={[styles.bubbleRow, item.is_mine ? { justifyContent: 'flex-end' } : { justifyContent: 'flex-start' }]}>
+        renderItem={({ item }) => {
+          const reactionCounts = new Map<string, number>();
+          (item.reactions || []).forEach((r) => reactionCounts.set(r.emoji, (reactionCounts.get(r.emoji) || 0) + 1));
+          return (
+          <TouchableOpacity
+            activeOpacity={0.8}
+            onLongPress={() => longPressMessage(item)}
+            delayLongPress={350}
+            style={[styles.bubbleRow, item.is_mine ? { justifyContent: 'flex-end' } : { justifyContent: 'flex-start' }]}
+          >
             <View style={[styles.bubble, item.is_mine ? styles.bubbleMine : styles.bubbleTheirs]}>
+              {!item.is_mine && groupName && item.sender_name ? (
+                <Text style={styles.senderName}>{item.sender_name}</Text>
+              ) : null}
+              {item.reply_to ? (
+                <View style={styles.replyQuote}>
+                  <Text style={styles.replyQuoteName}>{item.reply_to.sender_name}</Text>
+                  <Text style={styles.replyQuoteText} numberOfLines={2}>
+                    {item.reply_to.type !== 'text' ? `📎 ${item.reply_to.type}` : item.reply_to.text}
+                  </Text>
+                </View>
+              ) : null}
               {item.message_type === 'audio' && item.media_url ? (
                 <AudioBar uri={item.media_url} mine={item.is_mine} />
               ) : (
                 <Text style={[styles.bubbleText, item.is_mine && { color: '#ffffff' }]}>
                   {item.message_type === 'text' || !item.message_text
                     ? item.message_text || ''
-                    : `${item.message_type === 'image' ? '📷 Photo' : '🎬 Video'}${item.message_text ? `: ${item.message_text}` : ''}`}
+                    : `${item.message_type === 'image' ? '📷 Photo' : item.message_type === 'video' ? '🎬 Video' : '📎 Attachment'}${item.message_text ? `: ${item.message_text}` : ''}`}
                 </Text>
+              )}
+              {reactionCounts.size > 0 && (
+                <View style={styles.reactionRow}>
+                  {[...reactionCounts.entries()].map(([emoji, count]) => (
+                    <View key={emoji} style={styles.reactionPill}>
+                      <Text style={styles.reactionText}>{emoji}{count > 1 ? ` ${count}` : ''}</Text>
+                    </View>
+                  ))}
+                </View>
               )}
               <View style={styles.metaRow}>
                 <Text style={[styles.metaText, item.is_mine && { color: 'rgba(255,255,255,0.7)' }]}>
                   {formatTime(item.created_at)}
                 </Text>
+                {item.edited_at ? <Text style={styles.metaText}> (edited)</Text> : null}
                 <Ticks message={item} />
               </View>
             </View>
-          </View>
-        )}
+          </TouchableOpacity>
+          );
+        }}
       />
 
       {typing ? (
@@ -281,6 +425,31 @@ export default function ChatScreen() {
       ) : null}
 
       <View style={styles.composer}>
+        {editing ? (
+          <View style={styles.editBar}>
+            <Text style={styles.editBarText} numberOfLines={1}>Editing: {editing.message_text}</Text>
+            <TouchableOpacity
+              onPress={() => {
+                setEditing(null);
+                setText('');
+              }}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              <Text style={styles.recordCancelText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        ) : null}
+        {replyTo && !editing ? (
+          <View style={styles.editBar}>
+            <Text style={styles.editBarText} numberOfLines={1}>
+              Replying to {replyTo.is_mine ? 'yourself' : replyTo.sender_name || 'message'}:{' '}
+              {replyTo.message_type !== 'text' ? `📎 ${replyTo.message_type}` : replyTo.message_text}
+            </Text>
+            <TouchableOpacity onPress={() => setReplyTo(null)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+              <Text style={styles.recordCancelText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        ) : null}
         {voice.recording ? (
           <View style={styles.recordBar}>
             <View style={styles.recordDot} />
@@ -419,6 +588,75 @@ const styles = StyleSheet.create({
   bubbleText: {
     fontSize: 15,
     color: colors.text,
+  },
+  senderName: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: colors.primary,
+    marginBottom: 2,
+  },
+  replyQuote: {
+    borderLeftWidth: 3,
+    borderLeftColor: colors.primary,
+    backgroundColor: 'rgba(0,0,0,0.05)',
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    marginBottom: 4,
+  },
+  replyQuoteName: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: colors.primary,
+  },
+  replyQuoteText: {
+    fontSize: 12,
+    color: colors.textMuted,
+  },
+  reactionRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 4,
+    marginTop: 3,
+  },
+  reactionPill: {
+    backgroundColor: 'rgba(0,0,0,0.06)',
+    borderRadius: 999,
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+  },
+  reactionText: {
+    fontSize: 12,
+  },
+  editBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: colors.bgMuted,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    marginBottom: 6,
+    flex: 1,
+  },
+  editBarText: {
+    flex: 1,
+    fontSize: 12,
+    color: colors.textMuted,
+  },
+  groupHeaderAvatar: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  groupHeaderAvatarText: {
+    color: '#ffffff',
+    fontWeight: '800',
+    fontSize: 14,
   },
   metaRow: {
     flexDirection: 'row',

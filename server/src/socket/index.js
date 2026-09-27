@@ -6,6 +6,10 @@ const { getMembership } = require('../services/directConversations');
 /** userId -> Set<socketId> */
 const onlineUsers = new Map();
 
+/** callId -> { conversationId, callerId, calleeId, callType, startedAt, answered } */
+const liveCalls = new Map();
+const { recordCall } = require('../controllers/callsController');
+
 function socketsFor(userId) {
   return onlineUsers.get(Number(userId)) || new Set();
 }
@@ -168,6 +172,14 @@ function registerSocketHandlers() {
           return;
         }
         if (!isOnline(membership.otherId)) {
+          await recordCall({
+            conversationId,
+            callerId: userId,
+            calleeId: membership.otherId,
+            callType,
+            status: 'missed',
+            durationSeconds: 0,
+          });
           if (typeof callback === 'function') callback({ success: false, message: 'User is offline' });
           return;
         }
@@ -193,6 +205,15 @@ function registerSocketHandlers() {
             profile_image: me.profile_image || null,
           },
         });
+        // Track this live call so reject/end can be logged with context.
+        liveCalls.set(callId, {
+          conversationId,
+          callerId: userId,
+          calleeId: membership.otherId,
+          callType,
+          startedAt: Date.now(),
+          answered: false,
+        });
         if (typeof callback === 'function') callback({ success: true, call_id: callId });
       } catch {
         if (typeof callback === 'function') callback({ success: false, message: 'Call failed' });
@@ -203,6 +224,9 @@ function registerSocketHandlers() {
       const toUserId = Number(payload && payload.to_user_id);
       const sdp = payload && typeof payload.sdp === 'string' ? payload.sdp : '';
       if (!toUserId || !sdp) return;
+      const callId = payload && typeof payload.call_id === 'string' ? payload.call_id : '';
+      const live = liveCalls.get(callId);
+      if (live) live.answered = true;
       io.to(`user:${toUserId}`).emit('call:answered', {
         call_id: payload.call_id,
         sdp,
@@ -220,18 +244,45 @@ function registerSocketHandlers() {
       });
     });
 
-    socket.on('call:reject', (payload) => {
+    socket.on('call:reject', async (payload) => {
       const toUserId = Number(payload && payload.to_user_id);
       if (!toUserId) return;
+      const callId = payload && typeof payload.call_id === 'string' ? payload.call_id : '';
+      const live = liveCalls.get(callId);
+      if (live) {
+        await recordCall({
+          conversationId: live.conversationId,
+          callerId: live.callerId,
+          calleeId: live.calleeId,
+          callType: live.callType,
+          status: 'declined',
+          durationSeconds: 0,
+        });
+        liveCalls.delete(callId);
+      }
       io.to(`user:${toUserId}`).emit('call:rejected', {
         call_id: payload && payload.call_id,
         from_id: userId,
       });
     });
 
-    socket.on('call:end', (payload) => {
+    socket.on('call:end', async (payload) => {
       const toUserId = Number(payload && payload.to_user_id);
       if (!toUserId) return;
+      const callId = payload && typeof payload.call_id === 'string' ? payload.call_id : '';
+      const live = liveCalls.get(callId);
+      if (live) {
+        const durationSeconds = Math.round((Date.now() - live.startedAt) / 1000);
+        await recordCall({
+          conversationId: live.conversationId,
+          callerId: live.callerId,
+          calleeId: live.calleeId,
+          callType: live.callType,
+          status: live.answered ? 'completed' : 'cancelled',
+          durationSeconds: live.answered ? durationSeconds : 0,
+        });
+        liveCalls.delete(callId);
+      }
       io.to(`user:${toUserId}`).emit('call:ended', {
         call_id: payload && payload.call_id,
         from_id: userId,
@@ -305,9 +356,9 @@ function emitMessageSeen(conversationId, memberIds, message) {
 }
 
 /**
- * Called when a user deletes a message for themselves.
+ * Called when a user deletes a message for themselves (or the sender for all).
  */
-function emitMessageDeleted(conversationId, memberIds, messageId, deletedBy) {
+function emitMessageDeleted(conversationId, memberIds, messageId, deletedBy, forEveryone = false) {
   const io = getIo();
   if (!io) return;
   for (const memberId of memberIds) {
@@ -315,6 +366,36 @@ function emitMessageDeleted(conversationId, memberIds, messageId, deletedBy) {
       conversation_id: Number(conversationId),
       message_id: Number(messageId),
       deleted_by: Number(deletedBy),
+      for_everyone: Boolean(forEveryone),
+    });
+  }
+}
+
+/**
+ * Called after a message is edited.
+ */
+function emitMessageEdited(conversationId, memberIds, message) {
+  const io = getIo();
+  if (!io) return;
+  for (const memberId of memberIds) {
+    io.to(`user:${memberId}`).emit('message:edited', {
+      conversation_id: Number(conversationId),
+      message,
+    });
+  }
+}
+
+/**
+ * Called after reactions change on a message.
+ */
+function emitMessageReaction(conversationId, memberIds, messageId, reactions) {
+  const io = getIo();
+  if (!io) return;
+  for (const memberId of memberIds) {
+    io.to(`user:${memberId}`).emit('message:reaction', {
+      conversation_id: Number(conversationId),
+      message_id: Number(messageId),
+      reactions,
     });
   }
 }
@@ -324,6 +405,8 @@ module.exports = {
   emitNewMessage,
   emitMessageSeen,
   emitMessageDeleted,
+  emitMessageEdited,
+  emitMessageReaction,
   socketsFor,
   isOnline: (userId) => isOnline(userId),
 };

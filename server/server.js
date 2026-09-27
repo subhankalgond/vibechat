@@ -16,6 +16,7 @@ const usersRoutes = require('./src/routes/usersRoutes');
 const conversationRoutes = require('./src/routes/conversationRoutes');
 const messageRoutes = require('./src/routes/messageRoutes');
 const uploadRoutes = require('./src/routes/uploadRoutes');
+const featureRoutes = require('./src/routes/featureRoutes');
 
 const app = express();
 const server = http.createServer(app);
@@ -65,6 +66,7 @@ app.use('/api/users', usersRoutes);
 app.use('/api/conversations', conversationRoutes);
 app.use('/api/messages', messageRoutes);
 app.use('/api/upload', uploadRoutes);
+app.use('/api', featureRoutes);
 
 app.use(notFound);
 app.use(errorHandler);

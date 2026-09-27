@@ -1,5 +1,5 @@
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
-import { LogOut, MessageCircle, Search, Settings, User } from 'lucide-react';
+import { Bot, LogOut, MessageCircle, PhoneCall, Search, Settings, Sprout, User, Users } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
 import { useToast } from '../hooks/useToast';
 import Avatar from '../components/ui/Avatar';
@@ -7,6 +7,10 @@ import BrandMark from '../components/common/BrandMark';
 
 const NAV_ITEMS = [
   { to: '/app/messages', label: 'Chats', icon: MessageCircle, end: true },
+  { to: '/app/calls', label: 'Calls', icon: PhoneCall, end: false },
+  { to: '/app/status', label: 'Status', icon: Sprout, end: false },
+  { to: '/app/communities', label: 'Communities', icon: Users, end: false },
+  { to: '/app/vibeai', label: 'VibeAI', icon: Bot, end: false },
   { to: '/app/search', label: 'Search', icon: Search, end: false },
   { to: '/app/profile', label: 'Profile', icon: User, end: false },
 ];

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Loader2, Mic, Paperclip, Send, Square, Trash2, X } from 'lucide-react';
+import { Loader2, Mic, Paperclip, Pencil, Send, Square, Timer, Trash2, X } from 'lucide-react';
 import api, { apiError } from '../../services/api';
 import { useToast } from '../../hooks/useToast';
 import { validateMediaFile } from '../../utils/mediaValidation';
@@ -8,7 +8,26 @@ import { ButtonSpinner } from '../ui/Spinner';
 
 const RECORDING_MAX_MS = 5 * 60 * 1000; // 5 minutes cap per voice note
 
-export default function Composer({ conversationId, onMessageSent, onTypingStart, onTypingStop, disabled }) {
+export const DISAPPEAR_OPTIONS = [
+  { value: 0, label: 'Off' },
+  { value: 3600, label: '1 hour' },
+  { value: 86400, label: '24 hours' },
+  { value: 604800, label: '7 days' },
+];
+
+export default function Composer({
+  conversationId,
+  onMessageSent,
+  onTypingStart,
+  onTypingStop,
+  disabled,
+  replyTo,
+  onCancelReply,
+  editing,
+  onCancelEdit,
+  disappearsAfter,
+  onDisappearsChange,
+}) {
   const toast = useToast();
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
@@ -31,6 +50,7 @@ export default function Composer({ conversationId, onMessageSent, onTypingStart,
   const recordStartRef = useRef(0);
   const streamRef = useRef(null);
   const cancelRecordRef = useRef(false);
+  const [timerMenuOpen, setTimerMenuOpen] = useState(false);
 
   // Revoke object URLs when preview changes or unmounts.
   useEffect(() => {
@@ -96,6 +116,11 @@ export default function Composer({ conversationId, onMessageSent, onTypingStart,
     return response.data.data;
   }
 
+  const threadFields = () => ({
+    ...(replyTo ? { reply_to_id: replyTo.id } : {}),
+    ...(disappearsAfter ? { disappears_after_seconds: disappearsAfter } : {}),
+  });
+
   async function sendMediaMessage() {
     setUploading(true);
     setProgress(0);
@@ -106,6 +131,7 @@ export default function Composer({ conversationId, onMessageSent, onTypingStart,
         message_type: media.media_type,
         message_text: caption.trim(),
         media,
+        ...threadFields(),
       });
       onMessageSent(response.data.data.message);
       cancelPreview();
@@ -128,12 +154,33 @@ export default function Composer({ conversationId, onMessageSent, onTypingStart,
     const trimmed = text.trim();
     if (!trimmed) return;
 
+    // Edit mode: update the existing text message.
+    if (editing) {
+      setSending(true);
+      try {
+        const response = await api.put(`/messages/${editing.id}`, {
+          message_text: trimmed,
+        });
+        setText('');
+        onTypingStop();
+        typingRef.current = false;
+        clearTimeout(typingTimerRef.current);
+        onMessageSent(response.data.data.message, { edited: true });
+      } catch (error) {
+        toast.error(apiError(error).message);
+      } finally {
+        setSending(false);
+      }
+      return;
+    }
+
     setSending(true);
     try {
       const response = await api.post('/messages', {
         conversation_id: conversationId,
         message_type: 'text',
         message_text: trimmed,
+        ...threadFields(),
       });
       setText('');
       onTypingStop();
@@ -243,6 +290,7 @@ export default function Composer({ conversationId, onMessageSent, onTypingStart,
         message_type: 'audio',
         message_text: '',
         media,
+        ...threadFields(),
       });
       discardVoiceNote();
       onMessageSent(response.data.data.message);
@@ -254,10 +302,46 @@ export default function Composer({ conversationId, onMessageSent, onTypingStart,
   }
 
   const canSend = !disabled && !sending && !preview && !voiceNote && text.trim().length > 0;
+  const activeOption = DISAPPEAR_OPTIONS.find((o) => o.value === disappearsAfter);
 
   return (
     <>
       <div className="border-t border-neutral-200 bg-white px-3 py-2.5 dark:border-neutral-800 dark:bg-neutral-900 sm:px-4">
+        {editing && (
+          <div className="mb-2 flex items-center gap-2 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 dark:border-amber-700/50 dark:bg-amber-900/20">
+            <Pencil size={15} className="shrink-0 text-amber-600 dark:text-amber-400" />
+            <span className="flex-1 truncate text-xs text-amber-700 dark:text-amber-300">
+              Editing: {editing.message_text.slice(0, 60)}
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                onCancelEdit();
+                setText('');
+              }}
+              className="rounded-full p-1 text-amber-600 hover:bg-amber-100 dark:text-amber-400 dark:hover:bg-amber-900/40"
+              aria-label="Cancel edit"
+            >
+              <X size={14} />
+            </button>
+          </div>
+        )}
+        {replyTo && !editing && (
+          <div className="mb-2 flex items-center gap-2 rounded-xl border border-neutral-200 bg-neutral-50 px-3 py-2 dark:border-neutral-700 dark:bg-neutral-800">
+            <span className="flex-1 truncate text-xs text-neutral-600 dark:text-neutral-300">
+              Replying to <b>{replyTo.is_mine ? 'yourself' : replyTo.sender_name || 'message'}</b>:{' '}
+              {replyTo.message_type !== 'text' ? `📎 ${replyTo.message_type}` : replyTo.message_text}
+            </span>
+            <button
+              type="button"
+              onClick={onCancelReply}
+              className="rounded-full p-1 text-neutral-500 hover:bg-neutral-200 dark:hover:bg-neutral-700"
+              aria-label="Cancel reply"
+            >
+              <X size={14} />
+            </button>
+          </div>
+        )}
         {recording ? (
           <div className="flex items-center gap-3">
             <span className="flex h-2.5 w-2.5 shrink-0 animate-pulse rounded-full bg-red-500" aria-hidden="true" />
@@ -294,6 +378,53 @@ export default function Composer({ conversationId, onMessageSent, onTypingStart,
               onChange={handleFileChange}
               aria-label="Attach photo or video"
             />
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/jpeg,image/png,image/webp,video/mp4,video/quicktime,video/webm"
+              className="hidden"
+              onChange={handleFileChange}
+              aria-label="Attach photo or video"
+            />
+            {!editing && (
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setTimerMenuOpen((prev) => !prev)}
+                  disabled={disabled}
+                  className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full transition disabled:opacity-50 ${
+                    disappearsAfter
+                      ? 'text-amber-500 hover:bg-amber-50 dark:hover:bg-amber-900/20'
+                      : 'text-neutral-500 hover:bg-neutral-100 hover:text-neutral-700 dark:hover:bg-neutral-800 dark:hover:text-neutral-200'
+                  }`}
+                  aria-label="Disappearing messages"
+                  title={disappearsAfter ? `Disappearing: ${activeOption ? activeOption.label : 'on'}` : 'Disappearing messages'}
+                >
+                  <Timer size={19} />
+                </button>
+                {timerMenuOpen && (
+                  <div className="absolute bottom-12 left-0 z-20 w-36 rounded-xl border border-neutral-200 bg-white py-1 shadow-pop dark:border-neutral-700 dark:bg-neutral-800">
+                    {DISAPPEAR_OPTIONS.map((option) => (
+                      <button
+                        key={option.value}
+                        type="button"
+                        onClick={() => {
+                          onDisappearsChange(option.value);
+                          setTimerMenuOpen(false);
+                        }}
+                        className={`block w-full px-3 py-1.5 text-left text-xs font-medium hover:bg-neutral-100 dark:hover:bg-neutral-700 ${
+                          disappearsAfter === option.value
+                            ? 'text-primary-600 dark:text-primary-400'
+                            : 'text-neutral-700 dark:text-neutral-200'
+                        }`}
+                      >
+                        {option.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
             <button
               type="button"
               onClick={() => fileInputRef.current && fileInputRef.current.click()}

@@ -13,6 +13,7 @@ function previewText(conversation: Conversation, currentUserId: number): string 
   const prefix = last.sender_id === currentUserId ? 'You: ' : '';
   if (last.type === 'image') return `${prefix}Photo`;
   if (last.type === 'video') return `${prefix}Video`;
+  if (last.type === 'audio') return `${prefix}Voice message`;
   return `${prefix}${last.text}`;
 }
 
@@ -32,19 +33,30 @@ export default function ChatsScreen() {
   const [filter, setFilter] = useState('');
   const navigation = useNavigation<any>();
 
+  const [showGroups, setShowGroups] = useState(false);
   const filtered = conversations.filter((c) => {
+    if (showGroups && c.type !== 'group') return false;
     const term = filter.trim().toLowerCase();
     if (!term) return true;
-    return (
-      c.other_user.username.toLowerCase().includes(term) ||
-      c.other_user.full_name.toLowerCase().includes(term)
-    );
+    const name = c.type === 'group' ? c.name || '' : c.other_user?.full_name || '';
+    const username = c.type === 'group' ? '' : c.other_user?.username || '';
+    return name.toLowerCase().includes(term) || username.toLowerCase().includes(term);
   });
 
   return (
     <View style={styles.container}>
       <View style={styles.header}>
-        <Text style={styles.title}>Chats</Text>
+        <View style={styles.titleRow}>
+          <Text style={styles.title}>Chats</Text>
+          <TouchableOpacity
+            onPress={() => setShowGroups((prev) => !prev)}
+            style={[styles.groupToggle, showGroups && styles.groupToggleActive]}
+          >
+            <Text style={[styles.groupToggleText, showGroups && styles.groupToggleTextActive]}>
+              {showGroups ? 'Groups only' : 'All chats'}
+            </Text>
+          </TouchableOpacity>
+        </View>
         <TextInput
           value={filter}
           onChangeText={setFilter}
@@ -70,16 +82,26 @@ export default function ChatsScreen() {
             </TouchableOpacity>
           </View>
         }
-        renderItem={({ item }) => (
+        renderItem={({ item }) => {
+          const isGroup = item.type === 'group';
+          return (
           <TouchableOpacity
             style={styles.row}
-            onPress={() => navigation.navigate('Chat', { conversationId: item.id, otherUser: item.other_user })}
+            onPress={() => navigation.navigate('Chat', { conversationId: item.id, otherUser: item.other_user, groupName: item.name })}
           >
-            <Avatar fullName={item.other_user.full_name} uri={item.other_user.profile_image} size={50} online={item.other_user.is_online} />
+            {isGroup ? (
+              <View style={styles.groupAvatar}>
+                <Text style={styles.groupAvatarText} numberOfLines={1}>
+                  {(item.name || 'G').slice(0, 2).toUpperCase()}
+                </Text>
+              </View>
+            ) : (
+              <Avatar fullName={item.other_user?.full_name || '?'} uri={item.other_user?.profile_image || undefined} size={50} online={Boolean(item.other_user?.is_online)} />
+            )}
             <View style={styles.rowMain}>
               <View style={styles.rowTop}>
                 <Text style={styles.name} numberOfLines={1}>
-                  {item.other_user.full_name}
+                  {isGroup ? item.name || 'Group' : item.other_user?.full_name || 'Unknown'}
                 </Text>
                 {item.last_message ? (
                   <Text style={styles.time}>{formatTime(item.last_message.created_at)}</Text>
@@ -96,7 +118,8 @@ export default function ChatsScreen() {
               </View>
             </View>
           </TouchableOpacity>
-        )}
+          );
+        }}
       />
     </View>
   );
@@ -119,6 +142,45 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: colors.text,
     marginBottom: spacing.md,
+  },
+  titleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: spacing.md,
+  },
+  groupToggle: {
+    borderRadius: 999,
+    backgroundColor: colors.bgMuted,
+    borderWidth: 1,
+    borderColor: colors.border,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  groupToggleActive: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
+  },
+  groupToggleText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: colors.textMuted,
+  },
+  groupToggleTextActive: {
+    color: '#ffffff',
+  },
+  groupAvatar: {
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+    backgroundColor: colors.primarySoft || colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  groupAvatarText: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#ffffff',
   },
   search: {
     backgroundColor: colors.bgMuted,

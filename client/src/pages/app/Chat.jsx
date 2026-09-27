@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, MessageCircle, PhoneCall, Search, Video } from 'lucide-react';
+import { ArrowLeft, MessageCircle, PhoneCall, Search, Users, Video } from 'lucide-react';
 import api, { apiError } from '../../services/api';
 import { getSocket } from '../../services/socket';
 import { useAuth } from '../../hooks/useAuth';
@@ -25,6 +25,7 @@ export default function Chat() {
   const navigate = useNavigate();
 
   const [otherUser, setOtherUser] = useState(null);
+  const [groupInfo, setGroupInfo] = useState(null); // { name, members }
   const [messages, setMessages] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -34,6 +35,9 @@ export default function Chat() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [viewingMedia, setViewingMedia] = useState(null);
+  const [replyTo, setReplyTo] = useState(null);
+  const [editing, setEditing] = useState(null);
+  const [disappearsAfter, setDisappearsAfter] = useState(0);
 
   const scrollRef = useRef(null);
   const bottomRef = useRef(null);
@@ -62,7 +66,10 @@ export default function Chat() {
 
     // Show the cached header instantly when we already know this chat.
     const cached = findConversation(conversationId);
-    if (cached) setOtherUser(cached.other_user);
+    if (cached) {
+      setOtherUser(cached.other_user);
+      if (cached.type === 'group') setGroupInfo({ name: cached.name, members: null });
+    }
 
     Promise.all([
       api.get(`/conversations/${conversationId}`),
@@ -70,7 +77,13 @@ export default function Chat() {
     ])
       .then(([conversationRes, messagesRes]) => {
         if (cancelled) return;
-        setOtherUser(conversationRes.data.data.other_user);
+        const info = conversationRes.data.data;
+        setOtherUser(info.other_user);
+        setGroupInfo(
+          info.type === 'group'
+            ? { name: info.name, members: info.members || [] }
+            : null
+        );
         const data = messagesRes.data.data;
         setMessages(data.messages);
         setHasMore(data.has_more);
@@ -166,10 +179,22 @@ export default function Chat() {
 
     const onDeleted = (payload) => {
       if (payload.conversation_id !== conversationId) return;
-      if (payload.deleted_by === user.id) {
+      if (payload.for_everyone || payload.deleted_by === user.id) {
         setMessages((prev) => prev.filter((m) => m.id !== payload.message_id));
       }
-      // If the other user deleted it from their view only, nothing changes here.
+      // Deleting for me only never affects other members' views.
+    };
+
+    const onEdited = (payload) => {
+      if (payload.conversation_id !== conversationId) return;
+      setMessages((prev) => prev.map((m) => (m.id === payload.message.id ? { ...m, ...payload.message } : m)));
+    };
+
+    const onReaction = (payload) => {
+      if (payload.conversation_id !== conversationId) return;
+      setMessages((prev) =>
+        prev.map((m) => (m.id === payload.message_id ? { ...m, reactions: payload.reactions } : m))
+      );
     };
 
     const onPresence = (payload) => {
@@ -185,24 +210,62 @@ export default function Chat() {
     socket.on('message:seen', onSeen);
     socket.on('message:delivered', onDelivered);
     socket.on('message:deleted', onDeleted);
+    socket.on('message:edited', onEdited);
+    socket.on('message:reaction', onReaction);
     socket.on('user:presence', onPresence);
     return () => {
       socket.off('message:new', onNewMessage);
       socket.off('message:seen', onSeen);
       socket.off('message:delivered', onDelivered);
       socket.off('message:deleted', onDeleted);
+      socket.off('message:edited', onEdited);
+      socket.off('message:reaction', onReaction);
       socket.off('user:presence', onPresence);
     };
   }, [conversationId, user.id, markSeen, markConversationRead, setUser]);
 
-  // A sent message comes back either via socket or via the POST response;
-  // appending with an id check makes both orders safe.
-  const handleSent = useCallback((message) => {
+  // A sent (or edited) message comes back either via socket or via the API
+  // response; appending/updating with an id check makes both orders safe.
+  const handleSent = useCallback((message, options = {}) => {
+    if (options.edited) {
+      setMessages((prev) => prev.map((m) => (m.id === message.id ? { ...m, ...message } : m)));
+      return;
+    }
     setMessages((prev) => {
       if (prev.some((m) => m.id === message.id)) return prev;
       return [...prev, message];
     });
   }, []);
+
+  const handleReply = useCallback((message) => setReplyTo(message), []);
+  const handleEdit = useCallback((message) => {
+    setEditing(message);
+    setReplyTo(null);
+  }, []);
+
+  const handleReact = useCallback(
+    async (message, emoji) => {
+      try {
+        await api.post(`/messages/${message.id}/reactions`, { emoji });
+        // Optimistic state arrives via the message:reaction socket event.
+      } catch (err) {
+        toast.error(apiError(err).message);
+      }
+    },
+    [toast]
+  );
+
+  const handleDelete = useCallback(
+    async (message, forEveryone) => {
+      try {
+        await api.delete(`/messages/${message.id}${forEveryone ? '?for=everyone' : ''}`);
+        setMessages((prev) => prev.filter((m) => m.id !== message.id));
+      } catch (err) {
+        toast.error(apiError(err).message);
+      }
+    },
+    [toast]
+  );
 
   // Auto-scroll on new messages when the user is near the bottom.
   useEffect(() => {
@@ -242,15 +305,6 @@ export default function Chat() {
     }
   }
 
-  async function handleDelete(message) {
-    try {
-      await api.delete(`/messages/${message.id}`);
-      setMessages((prev) => prev.filter((m) => m.id !== message.id));
-    } catch (err) {
-      toast.error(apiError(err).message);
-    }
-  }
-
   const visibleMessages = searchTerm.trim()
     ? messages.filter((m) =>
         m.message_text && m.message_text.toLowerCase().includes(searchTerm.trim().toLowerCase())
@@ -270,7 +324,27 @@ export default function Chat() {
           <ArrowLeft size={20} />
         </button>
 
-        {otherUser ? (
+        {groupInfo ? (
+          <div className="flex min-w-0 flex-1 items-center gap-3 text-left">
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary-100 text-primary-600 dark:bg-primary-900/40 dark:text-primary-400">
+              <Users size={18} />
+            </span>
+            <span className="min-w-0">
+              <span className="block truncate text-sm font-semibold text-neutral-900 dark:text-neutral-100">
+                {groupInfo.name || 'Group'}
+              </span>
+              <span className="block truncate text-xs text-neutral-500 dark:text-neutral-400">
+                {typing ? (
+                  <span className="font-medium text-primary-600 dark:text-primary-400">typing...</span>
+                ) : groupInfo.members ? (
+                  `${groupInfo.members.length} members`
+                ) : (
+                  'Group chat'
+                )}
+              </span>
+            </span>
+          </div>
+        ) : otherUser ? (
           <button
             type="button"
             onClick={() => navigate(`/app/u/${otherUser.username}`)}
@@ -407,6 +481,10 @@ export default function Chat() {
                     message={message}
                     onOpenMedia={setViewingMedia}
                     onDelete={handleDelete}
+                    onReply={handleReply}
+                    onReact={handleReact}
+                    onEdit={handleEdit}
+                    isGroup={Boolean(groupInfo)}
                   />
                 ))}
                 {typing && (
@@ -432,6 +510,12 @@ export default function Chat() {
         conversationId={conversationId}
         disabled={loading || Boolean(error)}
         onMessageSent={handleSent}
+        replyTo={replyTo}
+        onCancelReply={() => setReplyTo(null)}
+        editing={editing}
+        onCancelEdit={() => setEditing(null)}
+        disappearsAfter={disappearsAfter}
+        onDisappearsChange={setDisappearsAfter}
         onTypingStart={() => {
           const socket = getSocket();
           if (socket) socket.emit('typing:start', { conversation_id: conversationId });

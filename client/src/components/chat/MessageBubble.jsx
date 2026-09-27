@@ -1,6 +1,8 @@
-import { useState } from 'react';
-import { Check, CheckCheck, Clock, Mic, Play, Trash2 } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { Check, CheckCheck, Mic, Pencil, Play, SmilePlus, Timer, Trash2 } from 'lucide-react';
 import { formatTime, formatBytes } from '../../utils/format';
+
+export const REACTION_EMOJIS = ['👍', '❤️', '😂', '😮', '😢', '🙏', '🔥'];
 
 function StatusTicks({ message }) {
   if (!message.is_mine) return null;
@@ -91,43 +93,155 @@ function AudioContent({ message, mine }) {
   );
 }
 
-export default function MessageBubble({ message, onOpenMedia, onDelete }) {
+function ReplyQuote({ replyTo, mine }) {
+  if (!replyTo) return null;
+  return (
+    <div className={`mb-1.5 rounded-lg border-l-4 px-2.5 py-1.5 text-xs ${mine ? 'border-white/70 bg-white/10' : 'border-primary-500 bg-neutral-100 dark:bg-neutral-700/60'}`}>
+      <span className={`block font-semibold ${mine ? 'text-white/90' : 'text-primary-600 dark:text-primary-400'}`}>
+        {replyTo.sender_name || 'User'}
+      </span>
+      <span className={`line-clamp-2 block ${mine ? 'text-white/80' : 'text-neutral-500 dark:text-neutral-300'}`}>
+        {replyTo.type !== 'text' ? `📎 ${replyTo.type}` : replyTo.text}
+      </span>
+    </div>
+  );
+}
+
+function ReactionBar({ reactions, mine }) {
+  if (!reactions || !reactions.length) return null;
+  const counts = new Map();
+  for (const r of reactions) counts.set(r.emoji, (counts.get(r.emoji) || 0) + 1);
+  return (
+    <div className={`-mt-1 flex flex-wrap gap-0.5 ${mine ? 'justify-end' : 'justify-start'} px-1`}>
+      {[...counts.entries()].map(([emoji, count]) => (
+        <span
+          key={emoji}
+          className="rounded-full border border-neutral-200 bg-white px-1.5 py-0.5 text-xs shadow-sm dark:border-neutral-700 dark:bg-neutral-800"
+        >
+          {emoji}{count > 1 && <span className="ml-0.5 text-[10px] font-semibold text-neutral-500">{count}</span>}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+/** Live countdown for disappearing messages. */
+function DisappearingTimer({ message }) {
+  const [left, setLeft] = useState(null);
+  useEffect(() => {
+    if (!message.disappears_after_seconds) return undefined;
+    const tick = () => {
+      const end = new Date(message.created_at).getTime() + message.disappears_after_seconds * 1000;
+      const remaining = Math.max(0, Math.floor((end - Date.now()) / 1000));
+      setLeft(remaining);
+    };
+    tick();
+    const timer = setInterval(tick, 1000);
+    return () => clearInterval(timer);
+  }, [message.created_at, message.disappears_after_seconds]);
+  if (left === null) return null;
+  const label = left >= 3600 ? `${Math.floor(left / 3600)}h` : left >= 60 ? `${Math.floor(left / 60)}m` : `${left}s`;
+  return (
+    <span className="inline-flex items-center gap-0.5 text-amber-500" title="Disappearing message">
+      <Timer size={12} /> {label}
+    </span>
+  );
+}
+
+export default function MessageBubble({
+  message,
+  onOpenMedia,
+  onDelete,
+  onReply,
+  onReact,
+  onEdit,
+  isGroup,
+}) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
   const mine = message.is_mine;
   const hasCaption = message.message_text && message.message_text.length > 0;
+
+  const menuActions = [];
+  if (onReply) menuActions.push({ label: 'Reply', action: () => onReply(message) });
+  if (mine && message.message_type === 'text' && onEdit) {
+    menuActions.push({ label: 'Edit', action: () => onEdit(message), icon: Pencil });
+  }
+  if (mine) {
+    menuActions.push({ label: 'Delete for me', action: () => onDelete(message, false), danger: true });
+    if (onEdit) menuActions.push({ label: 'Delete for everyone', action: () => onDelete(message, true), danger: true });
+  }
 
   return (
     <div className={`group flex items-end gap-2 ${mine ? 'justify-end' : 'justify-start'}`}>
       {mine && (
-        <button
-          type="button"
-          onClick={() => setMenuOpen((prev) => !prev)}
-          className="mb-1 rounded-full p-1 text-neutral-300 opacity-0 transition hover:bg-neutral-100 hover:text-red-500 focus:opacity-100 group-hover:opacity-100 dark:hover:bg-neutral-800"
-          aria-label="Delete message"
-          title="Delete for me"
-        >
-          <Trash2 size={14} />
-        </button>
+        <div className="mb-1 flex flex-col items-center gap-1 opacity-0 transition group-hover:opacity-100 focus-within:opacity-100">
+          <button
+            type="button"
+            onClick={() => setPickerOpen((prev) => !prev)}
+            className="rounded-full p-1 text-neutral-400 transition hover:bg-neutral-100 hover:text-primary-600 dark:hover:bg-neutral-800"
+            aria-label="React"
+            title="React"
+          >
+            <SmilePlus size={15} />
+          </button>
+          <button
+            type="button"
+            onClick={() => setMenuOpen((prev) => !prev)}
+            className="rounded-full p-1 text-neutral-300 transition hover:bg-neutral-100 hover:text-red-500 dark:hover:bg-neutral-800"
+            aria-label="Message options"
+            title="Options"
+          >
+            <Trash2 size={14} />
+          </button>
+        </div>
       )}
 
-      <div className={`max-w-[85%] sm:max-w-[70%] ${mine ? 'items-end' : 'items-start'} flex flex-col`}>
-        {menuOpen && mine && (
-          <div className="mb-1 flex items-center gap-2 rounded-lg border border-neutral-200 bg-white px-2.5 py-1.5 shadow-pop dark:border-neutral-700 dark:bg-neutral-800">
-            <span className="text-xs text-neutral-500 dark:text-neutral-400">Delete for me?</span>
-            <button
-              type="button"
-              onClick={() => {
-                setMenuOpen(false);
-                onDelete(message);
-              }}
-              className="text-xs font-semibold text-red-600 hover:text-red-700 dark:text-red-400"
-            >
-              Delete
-            </button>
+      <div className={`flex max-w-[85%] flex-col sm:max-w-[70%] ${mine ? 'items-end' : 'items-start'}`}>
+        {isGroup && !mine && (
+          <span className="mb-0.5 px-1 text-[11px] font-semibold text-primary-600 dark:text-primary-400">
+            {message.sender_name || 'Member'}
+          </span>
+        )}
+
+        {pickerOpen && (
+          <div className="mb-1 flex items-center gap-1 rounded-full border border-neutral-200 bg-white px-2 py-1 shadow-pop dark:border-neutral-700 dark:bg-neutral-800">
+            {REACTION_EMOJIS.map((emoji) => (
+              <button
+                key={emoji}
+                type="button"
+                onClick={() => {
+                  setPickerOpen(false);
+                  if (onReact) onReact(message, emoji);
+                }}
+                className="rounded-full p-0.5 text-base transition hover:scale-125"
+                aria-label={`React ${emoji}`}
+              >
+                {emoji}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {menuOpen && (
+          <div className="mb-1 flex flex-col gap-0.5 rounded-lg border border-neutral-200 bg-white px-2 py-1.5 shadow-pop dark:border-neutral-700 dark:bg-neutral-800">
+            {menuActions.map((item) => (
+              <button
+                key={item.label}
+                type="button"
+                onClick={() => {
+                  setMenuOpen(false);
+                  item.action();
+                }}
+                className={`text-left text-xs font-semibold ${item.danger ? 'text-red-600 hover:text-red-700 dark:text-red-400' : 'text-neutral-700 hover:text-neutral-900 dark:text-neutral-200 dark:hover:text-white'}`}
+              >
+                {item.label}
+              </button>
+            ))}
             <button
               type="button"
               onClick={() => setMenuOpen(false)}
-              className="text-xs font-medium text-neutral-500 hover:text-neutral-700 dark:text-neutral-400"
+              className="text-left text-xs font-medium text-neutral-500 hover:text-neutral-700 dark:text-neutral-400"
             >
               Cancel
             </button>
@@ -141,10 +255,11 @@ export default function MessageBubble({ message, onOpenMedia, onDelete }) {
               : 'bg-white text-neutral-800 dark:bg-neutral-800 dark:text-neutral-100'
           } ${message.message_type !== 'text' ? 'p-1.5' : ''}`}
         >
-      {message.message_type === 'image' && <ImageContent message={message} onOpen={onOpenMedia} />}
-      {message.message_type === 'video' && <VideoContent message={message} onOpen={onOpenMedia} />}
-      {message.message_type === 'audio' && <AudioContent message={message} mine={mine} />}
-      {message.message_type === 'text' && <span className="whitespace-pre-wrap break-words">{message.message_text}</span>}
+          <ReplyQuote replyTo={message.reply_to} mine={mine} />
+          {message.message_type === 'image' && <ImageContent message={message} onOpen={onOpenMedia} />}
+          {message.message_type === 'video' && <VideoContent message={message} onOpen={onOpenMedia} />}
+          {message.message_type === 'audio' && <AudioContent message={message} mine={mine} />}
+          {message.message_type === 'text' && <span className="whitespace-pre-wrap break-words">{message.message_text}</span>}
           {message.message_type !== 'text' && hasCaption && (
             <p className={`px-2 pb-1 pt-1.5 ${mine ? 'text-white' : 'text-neutral-800 dark:text-neutral-100'}`}>
               {message.message_text}
@@ -152,11 +267,29 @@ export default function MessageBubble({ message, onOpenMedia, onDelete }) {
           )}
         </div>
 
+        <ReactionBar reactions={message.reactions} mine={mine} />
+
         <div className={`mt-1 flex items-center gap-1.5 px-1 text-[11px] text-neutral-400 dark:text-neutral-500 ${mine ? 'justify-end' : ''}`}>
           <span>{formatTime(message.created_at)}</span>
+          {message.edited_at && <span className="italic">(edited)</span>}
+          {message.disappears_after_seconds && <DisappearingTimer message={message} />}
           {mine && <StatusTicks message={message} />}
         </div>
       </div>
+
+      {!mine && (
+        <div className="mb-1 opacity-0 transition group-hover:opacity-100 focus-within:opacity-100">
+          <button
+            type="button"
+            onClick={() => setPickerOpen((prev) => !prev)}
+            className="rounded-full p-1 text-neutral-400 transition hover:bg-neutral-100 hover:text-primary-600 dark:hover:bg-neutral-800"
+            aria-label="React"
+            title="React"
+          >
+            <SmilePlus size={15} />
+          </button>
+        </div>
+      )}
     </div>
   );
 }

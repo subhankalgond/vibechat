@@ -29,6 +29,8 @@ const env = {
     apiSecret: process.env.CLOUDINARY_API_SECRET,
   },
 
+  vibeaiApiKey: process.env.VIBEAI_API_KEY || '',
+
   maxImageMb: int(process.env.MAX_IMAGE_MB, 10),
   maxVideoMb: int(process.env.MAX_VIDEO_MB, 50),
 };

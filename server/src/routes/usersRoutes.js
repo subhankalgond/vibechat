@@ -8,9 +8,13 @@ const router = express.Router();
 
 router.use(requireAuth);
 
+const privacyController = require('../controllers/privacyController');
+
 router.get('/search', usersController.search);
 router.get('/:username', usersController.getByUsername);
 router.put('/profile', usersController.updateProfile);
+router.put('/privacy', privacyController.updatePrivacy);
+router.put('/password', privacyController.changePassword);
 router.put('/avatar', withLimits('image'), memoryUpload().single('image'), uploadController.updateAvatar);
 
 module.exports = router;

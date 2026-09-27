@@ -11,6 +11,10 @@ import Terms from './pages/auth/Terms';
 import AppLayout from './layouts/AppLayout';
 import Messages from './pages/app/Messages';
 import Chat from './pages/app/Chat';
+import Calls from './pages/app/Calls';
+import Status from './pages/app/Status';
+import Communities from './pages/app/Communities';
+import VibeAI from './pages/app/VibeAI';
 import Search from './pages/app/Search';
 import Profile from './pages/app/Profile';
 import UserProfile from './pages/app/UserProfile';
@@ -75,6 +79,10 @@ export default function App() {
           <Route index element={<Navigate to="messages" replace />} />
           <Route path="messages" element={<Messages />} />
           <Route path="messages/:conversationId" element={<Chat />} />
+          <Route path="calls" element={<Calls />} />
+          <Route path="status" element={<Status />} />
+          <Route path="communities" element={<Communities />} />
+          <Route path="vibeai" element={<VibeAI />} />
           <Route path="search" element={<Search />} />
           <Route path="profile" element={<Profile />} />
           <Route path="u/:username" element={<UserProfile />} />

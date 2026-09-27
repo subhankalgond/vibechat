@@ -9,6 +9,9 @@ router.use(requireAuth);
 router.get('/', conversationsController.list);
 router.post('/', conversationsController.create);
 router.get('/:id', conversationsController.getOne);
+router.put('/:id', conversationsController.update);
+router.post('/:id/members', conversationsController.addMembers);
+router.delete('/:id/members/:userId', conversationsController.removeMember);
 router.delete('/:id', conversationsController.remove);
 
 module.exports = router;

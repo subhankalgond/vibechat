@@ -16,7 +16,10 @@ export interface OtherUser {
 export interface Conversation {
   id: number;
   updated_at: string;
-  other_user: OtherUser;
+  type?: 'direct' | 'group' | string;
+  name?: string | null;
+  member_count?: number;
+  other_user: OtherUser | null;
   last_message: {
     type: string;
     text: string;
@@ -117,7 +120,7 @@ export function ConversationsProvider({ children }: { children: React.ReactNode 
     const onPresence = (payload: { user_id: number; is_online: boolean }) => {
       setConversations((prev) =>
         prev.map((c) =>
-          c.other_user.id === payload.user_id
+          c.other_user && c.other_user.id === payload.user_id
             ? { ...c, other_user: { ...c.other_user, is_online: payload.is_online } }
             : c
         )
