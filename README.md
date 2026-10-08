@@ -1,4 +1,4 @@
-#   VibeChat
+#     VibeChat
 
 VibeChat is a private messaging web application. People register with a unique username, find each other through search, and chat one-to-one with text, photos, and videos in real time. There is no public feed, no follower graph, and no group chat. It is a messenger, built on original branding and UI.
 
