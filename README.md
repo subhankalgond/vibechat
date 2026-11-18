@@ -1,8 +1,8 @@
-#    VibeChat
+# VibeChat
 
 VibeChat is a private messaging web application. People register with a unique username, find each other through search, and chat one-to-one with text, photos, and videos in real time. There is no public feed, no follower graph, and no group chat. It is a messenger, built on original branding and UI.
 
-## Features
+##   Features
 
 - Email + username registration with bcrypt password hashing and JWT sessions
 - Unique usernames with live duplicate checks on the server
@@ -99,7 +99,7 @@ vibechat/
 npm --prefix server run setup-db
 ```
 
-The script creates five tables:
+   The script creates five tables:
 
 - `users`: account data with unique `username` and `email`, presence fields
 - `conversations`: one row per conversation
